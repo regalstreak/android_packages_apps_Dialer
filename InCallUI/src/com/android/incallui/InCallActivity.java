@@ -335,6 +335,7 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
         if (mShowPostCharWaitDialogOnResume) {
             showPostCharWaitDialog(mShowPostCharWaitDialogCallId, mShowPostCharWaitDialogChars);
         }
+        InCallPresenter.getInstance().updatePrimaryCallState();
     }
 
     // onPause is guaranteed to be called when the InCallActivity goes
@@ -365,6 +366,7 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
     @Override
     protected void onDestroy() {
         Log.d(this, "onDestroy()...  this = " + this);
+        InCallLowBatteryListener.getInstance().onDestroyInCallActivity();
         InCallPresenter.getInstance().unsetActivity(this);
         InCallPresenter.getInstance().updateIsChangingConfigurations();
         super.onDestroy();
@@ -923,6 +925,11 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
         if (mDialog != null) {
             mDialog.dismiss();
             mDialog = null;
+        }
+        SelectPhoneAccountDialogFragment dialogFragment = (SelectPhoneAccountDialogFragment)
+                getFragmentManager().findFragmentByTag(TAG_SELECT_ACCT_FRAGMENT);
+        if (dialogFragment != null) {
+            dialogFragment.dismiss();
         }
         if (mAnswerFragment != null) {
             mAnswerFragment.dismissPendingDialogs();
