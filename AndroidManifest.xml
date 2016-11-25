@@ -61,6 +61,8 @@
     <uses-permission android:name="android.permission.BROADCAST_STICKY" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CONNECTIVITY_INTERNAL" />
+    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS" />
     <!-- This tells the activity manager to not delay any of our activity
      start requests, even if they happen immediately after the user
      presses home. -->
@@ -325,7 +327,7 @@
                   android:label=""
                   android:excludeFromRecents="true"
                   android:launchMode="singleInstance"
-                  android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
+                  android:configChanges="smallestScreenSize|screenLayout|keyboardHidden"
                   android:exported="false"
                   android:screenOrientation="nosensor"
                   android:directBootAware="true"
