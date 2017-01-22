@@ -38,6 +38,7 @@ import static com.android.incallui.CallButtonFragment.Buttons.BUTTON_RXTX_VIDEO_
 import static com.android.incallui.CallButtonFragment.Buttons.BUTTON_RX_VIDEO_CALL;
 import static com.android.incallui.CallButtonFragment.Buttons.BUTTON_VO_VIDEO_CALL;
 import static com.android.incallui.CallButtonFragment.Buttons.BUTTON_ADD_PARTICIPANT;
+import static com.android.incallui.CallButtonFragment.Buttons.BUTTON_HIDE_ME;
 
 import android.annotation.NonNull;
 import android.content.Context;
@@ -82,7 +83,6 @@ public class CallButtonFragment
         implements CallButtonPresenter.CallButtonUi, OnMenuItemClickListener, OnDismissListener,
         View.OnClickListener {
 
-    private static final int INVALID_INDEX = -1;
     private int mButtonMaxVisible;
     // The button is currently visible in the UI
     private static final int BUTTON_VISIBLE = 1;
@@ -116,7 +116,8 @@ public class CallButtonFragment
         public static final int BUTTON_VO_VIDEO_CALL = 18;
         public static final int BUTTON_RECORD_CALL = 19;
         public static final int BUTTON_ADD_PARTICIPANT = 20;
-        public static final int BUTTON_COUNT = 21;
+        public static final int BUTTON_HIDE_ME = 21;
+        public static final int BUTTON_COUNT = 22;
     }
 
     private SparseIntArray mButtonVisibilityMap = new SparseIntArray(BUTTON_COUNT);
@@ -139,6 +140,7 @@ public class CallButtonFragment
     private ImageButton mAssuredTransferButton;
     private ImageButton mConsultativeTransferButton;
     private ImageButton mAddParticipantButton;
+    private ImageButton mHideMeButton;
     private ImageButton mRecordButton;
     private ImageButton mRxTxVideoCallButton;
     private ImageButton mRxVideoCallButton;
@@ -216,6 +218,8 @@ public class CallButtonFragment
         mConsultativeTransferButton.setOnClickListener(this);
         mAddParticipantButton = (ImageButton) parent.findViewById(R.id.addParticipant);
         mAddParticipantButton.setOnClickListener(this);
+        mHideMeButton = (ImageButton) parent.findViewById(R.id.hideMe);
+        mHideMeButton.setOnClickListener(this);
         mOverflowButton = (ImageButton) parent.findViewById(R.id.overflowButton);
         mOverflowButton.setOnClickListener(this);
         mManageVideoCallConferenceButton = (ImageButton) parent.findViewById(
@@ -237,7 +241,7 @@ public class CallButtonFragment
         super.onActivityCreated(savedInstanceState);
 
         // set the buttons
-        updateAudioButtons(getPresenter().getSupportedAudio());
+        updateAudioButtons();
     }
 
     @Override
@@ -272,6 +276,8 @@ public class CallButtonFragment
             getPresenter().showDialpadClicked(!mShowDialpadButton.isSelected());
         } else if (id == R.id.addParticipant) {
             getPresenter().addParticipantClicked();
+        } else if (id == R.id.hideMe) {
+            getPresenter().hideMeClicked(!mHideMeButton.isSelected());
         } else if (id == R.id.changeToVideoButton) {
             getPresenter().changeToVideoClicked();
         } else if (id == R.id.changeToVoiceButton) {
@@ -293,6 +299,7 @@ public class CallButtonFragment
         } else if (id == R.id.overflowButton) {
             if (mOverflowPopup != null) {
                 updateRecordMenu();
+                updateMergeCallsMenuItem();
                 mOverflowPopup.show();
             }
         } else if (id == R.id.manageVideoCallConferenceButton) {
@@ -326,6 +333,13 @@ public class CallButtonFragment
         if (item != null) {
             item.setTitle(((InCallActivity) getActivity()).isCallRecording() ?
                     R.string.menu_stop_record : R.string.menu_start_record);
+        }
+    }
+
+    private void updateMergeCallsMenuItem() {
+        MenuItem item = mOverflowPopup.getMenu().findItem(BUTTON_MERGE);
+        if (item != null) {
+            item.setEnabled(mMergeButton.isEnabled());
         }
     }
 
@@ -366,6 +380,7 @@ public class CallButtonFragment
                 mChangeToVoiceButton,
                 mAddCallButton,
                 mMergeButton,
+                mHideMeButton,
                 mBlindTransferButton,
                 mAssuredTransferButton,
                 mConsultativeTransferButton,
@@ -469,6 +484,7 @@ public class CallButtonFragment
         mOverflowButton.setEnabled(isEnabled);
         mManageVideoCallConferenceButton.setEnabled(isEnabled);
         mAddParticipantButton.setEnabled(isEnabled);
+        mHideMeButton.setEnabled(isEnabled);
         mRecordButton.setEnabled(isEnabled);
         mRxTxVideoCallButton.setEnabled(isEnabled);
         mRxVideoCallButton.setEnabled(isEnabled);
@@ -531,6 +547,8 @@ public class CallButtonFragment
             return mRxVideoCallButton;
         } else if (id == BUTTON_VO_VIDEO_CALL) {
             return mVoVideoCallButton;
+        } else if (id == BUTTON_HIDE_ME) {
+            return mHideMeButton;
         } else {
             Log.w(this, "Invalid button id");
             return null;
@@ -553,8 +571,14 @@ public class CallButtonFragment
     }
 
     @Override
-    public void setVideoPaused(boolean isPaused) {
-        mPauseVideoButton.setSelected(isPaused);
+    public void setVideoPaused(boolean isVideoPaused) {
+        mPauseVideoButton.setSelected(isVideoPaused);
+
+        if (isVideoPaused) {
+            mPauseVideoButton.setContentDescription(getText(R.string.onscreenTurnOnCameraText));
+        } else {
+            mPauseVideoButton.setContentDescription(getText(R.string.onscreenTurnOffCameraText));
+        }
     }
 
     @Override
@@ -579,6 +603,15 @@ public class CallButtonFragment
             if (item != null) {
                 item.setTitle(description);
             }
+        }
+    }
+
+    public void setHideMe(boolean value) {
+        if (mHideMeButton.isSelected() != value) {
+            mHideMeButton.setSelected(value);
+            mHideMeButton.setContentDescription(getContext().getString(
+                    value ? R.string.qti_ims_hideMeText_selected
+                            : R.string.qti_ims_hideMeText_unselected));
         }
     }
 
@@ -648,7 +681,7 @@ public class CallButtonFragment
 
     @Override
     public void setAudio(int mode) {
-        updateAudioButtons(getPresenter().getSupportedAudio());
+        updateAudioButtons();
         refreshAudioModePopup();
 
         if (mPrevAudioMode != mode) {
@@ -659,7 +692,7 @@ public class CallButtonFragment
 
     @Override
     public void setSupportedAudio(int modeMask) {
-        updateAudioButtons(modeMask);
+        updateAudioButtons();
         refreshAudioModePopup();
     }
 
@@ -698,7 +731,7 @@ public class CallButtonFragment
     public void onDismiss(PopupMenu menu) {
         Log.d(this, "- onDismiss: " + menu);
         mAudioModePopupVisible = false;
-        updateAudioButtons(getPresenter().getSupportedAudio());
+        updateAudioButtons();
     }
 
     /**
@@ -743,7 +776,7 @@ public class CallButtonFragment
      * Updates the audio button so that the appriopriate visual layers
      * are visible based on the supported audio formats.
      */
-    private void updateAudioButtons(int supportedModes) {
+    private void updateAudioButtons() {
         final boolean bluetoothSupported = isSupported(CallAudioState.ROUTE_BLUETOOTH);
         final boolean speakerSupported = isSupported(CallAudioState.ROUTE_SPEAKER);
 
