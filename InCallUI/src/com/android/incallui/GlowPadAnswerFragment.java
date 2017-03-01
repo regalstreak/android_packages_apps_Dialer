@@ -91,6 +91,8 @@ public class GlowPadAnswerFragment extends AnswerFragment {
         final int directionDescriptionsResourceId;
         final int handleDrawableResourceId;
         mGlowpad.setVideoState(videoState);
+        final boolean isEnhanceUIEnabled = getContext().getResources().getBoolean(
+                R.bool.config_enable_enhance_video_call_ui);
 
         switch (targetSet) {
             case TARGET_SET_FOR_AUDIO_WITH_SMS:
@@ -102,7 +104,12 @@ public class GlowPadAnswerFragment extends AnswerFragment {
                 handleDrawableResourceId = R.drawable.ic_incall_audio_handle;
                 break;
             case TARGET_SET_FOR_VIDEO_WITHOUT_SMS:
-                targetResourceId = R.array.incoming_call_widget_video_without_sms_targets;
+                if (isEnhanceUIEnabled) {
+                    targetResourceId =
+                            R.array.enhance_incoming_call_widget_video_without_sms_targets;
+                } else {
+                    targetResourceId = R.array.incoming_call_widget_video_without_sms_targets;
+                }
                 targetDescriptionsResourceId =
                         R.array.incoming_call_widget_video_without_sms_target_descriptions;
                 directionDescriptionsResourceId =
@@ -110,7 +117,11 @@ public class GlowPadAnswerFragment extends AnswerFragment {
                 handleDrawableResourceId = R.drawable.ic_incall_video_handle;
                 break;
             case TARGET_SET_FOR_VIDEO_WITH_SMS:
-                targetResourceId = R.array.incoming_call_widget_video_with_sms_targets;
+                if (isEnhanceUIEnabled) {
+                    targetResourceId = R.array.enhance_incoming_call_widget_video_with_sms_targets;
+                } else {
+                    targetResourceId = R.array.incoming_call_widget_video_with_sms_targets;
+                }
                 targetDescriptionsResourceId =
                         R.array.incoming_call_widget_video_with_sms_target_descriptions;
                 directionDescriptionsResourceId =
@@ -126,6 +137,140 @@ public class GlowPadAnswerFragment extends AnswerFragment {
                         .incoming_call_widget_video_request_target_direction_descriptions;
                 handleDrawableResourceId = R.drawable.ic_incall_video_handle;
                 break;
+            case TARGET_SET_FOR_QTI_VIDEO_WITHOUT_SMS:
+                if (isEnhanceUIEnabled) {
+                    targetResourceId =
+                            R.array.enhance_incoming_call_widget_video_without_sms_targets;
+                } else {
+                    targetResourceId = R.array.qti_incoming_call_widget_video_without_sms_targets;
+                }
+                targetDescriptionsResourceId =
+                        R.array.qti_incoming_call_widget_video_without_sms_target_descriptions;
+                directionDescriptionsResourceId =
+                        R.array.qti_incoming_call_widget_video_without_sms_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+            case TARGET_SET_FOR_QTI_VIDEO_WITH_SMS:
+                if (isEnhanceUIEnabled) {
+                    targetResourceId = R.array.enhance_incoming_call_widget_video_with_sms_targets;
+                } else {
+                    targetResourceId = R.array.qti_incoming_call_widget_video_with_sms_targets;
+                }
+                targetDescriptionsResourceId =
+                        R.array.qti_incoming_call_widget_video_with_sms_target_descriptions;
+                directionDescriptionsResourceId =
+                        R.array.qti_incoming_call_widget_video_with_sms_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+            case TARGET_SET_FOR_QTI_VIDEO_TRANSMIT_ACCEPT_REJECT_WITHOUT_SMS:
+                targetResourceId =
+                    R.array.qti_incoming_call_widget_tx_video_without_sms_targets;
+                targetDescriptionsResourceId =
+                    R.array.qti_incoming_call_widget_tx_video_without_sms_target_descriptions;
+                directionDescriptionsResourceId =
+                    R.array.qti_incoming_call_widget_tx_video_without_sms_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+            case TARGET_SET_FOR_QTI_VIDEO_TRANSMIT_ACCEPT_REJECT_WITH_SMS:
+                targetResourceId =
+                    R.array.qti_incoming_call_widget_tx_video_with_sms_targets;
+                targetDescriptionsResourceId =
+                    R.array.qti_incoming_call_widget_tx_video_with_sms_target_descriptions;
+                directionDescriptionsResourceId =
+                    R.array.qti_incoming_call_widget_tx_video_with_sms_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+            case TARGET_SET_FOR_QTI_VIDEO_RECEIVE_ACCEPT_REJECT_WITHOUT_SMS:
+                targetResourceId =
+                    R.array.qti_incoming_call_widget_rx_video_without_sms_targets;
+                targetDescriptionsResourceId =
+                    R.array.qti_incoming_call_widget_rx_video_without_sms_target_descriptions;
+                directionDescriptionsResourceId =
+                    R.array.qti_incoming_call_widget_rx_video_without_sms_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+            case TARGET_SET_FOR_QTI_VIDEO_RECEIVE_ACCEPT_REJECT_WITH_SMS:
+                targetResourceId =
+                    R.array.qti_incoming_call_widget_rx_video_with_sms_targets;
+                targetDescriptionsResourceId =
+                    R.array.qti_incoming_call_widget_rx_video_with_sms_target_descriptions;
+                directionDescriptionsResourceId =
+                    R.array.qti_incoming_call_widget_rx_video_with_sms_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+            case TARGET_SET_FOR_QTI_VIDEO_ACCEPT_REJECT_REQUEST:
+                if (isEnhanceUIEnabled) {
+                    targetResourceId =
+                            R.array.enhance_incoming_call_widget_video_upgrade_request_targets;
+                } else {
+                    targetResourceId = R.array.qti_incoming_call_widget_video_request_targets;
+                }
+                targetDescriptionsResourceId =
+                        R.array.qti_incoming_call_widget_video_request_target_descriptions;
+                directionDescriptionsResourceId = R.array.
+                        qti_incoming_call_widget_video_request_target_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+            case TARGET_SET_FOR_QTI_BIDIRECTIONAL_VIDEO_ACCEPT_REJECT_REQUEST:
+                if (isEnhanceUIEnabled) {
+                    targetResourceId = R.array.
+                        enhance_incoming_call_bidirectional_video_accept_request_targets;
+                } else {
+                    targetResourceId = R.array.
+                        qti_incoming_call_widget_bidirectional_video_accept_reject_request_targets;
+                }
+                targetDescriptionsResourceId =
+                        R.array.qti_incoming_call_widget_video_request_target_descriptions;
+                directionDescriptionsResourceId = R.array.
+                        qti_incoming_call_widget_video_request_target_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+            case TARGET_SET_FOR_QTI_VIDEO_TRANSMIT_ACCEPT_REJECT_REQUEST:
+                if (isEnhanceUIEnabled) {
+                    targetResourceId =
+                            R.array.enhance_incoming_call_video_transmit_accept_request_targets;
+                } else {
+                    targetResourceId = R.array.
+                           qti_incoming_call_widget_video_transmit_accept_reject_request_targets;
+                }
+                targetDescriptionsResourceId = R.array.
+                        qti_incoming_call_widget_video_transmit_request_target_descriptions;
+                directionDescriptionsResourceId = R.array
+                        .qti_incoming_call_widget_video_request_target_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+            case TARGET_SET_FOR_QTI_VIDEO_RECEIVE_ACCEPT_REJECT_REQUEST:
+                if (isEnhanceUIEnabled) {
+                    targetResourceId = R.array.
+                            enhance_incoming_call_video_receive_accept_request_targets;
+                } else {
+                    targetResourceId = R.array.
+                            qti_incoming_call_widget_video_receive_accept_reject_request_targets;
+                }
+                targetDescriptionsResourceId =
+                        R.array.qti_incoming_call_widget_video_receive_request_target_descriptions;
+                directionDescriptionsResourceId = R.array
+                        .qti_incoming_call_widget_video_request_target_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_video_handle;
+                break;
+
+            case TARGET_SET_FOR_QTI_AUDIO_WITH_SMS:
+                targetResourceId = R.array.qti_incoming_call_widget_audio_with_sms_targets;
+                targetDescriptionsResourceId =
+                        R.array.qti_incoming_call_widget_audio_with_sms_target_descriptions;
+                directionDescriptionsResourceId = R.array
+                        .qti_incoming_call_widget_audio_with_sms_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_audio_handle;
+                break;
+            case TARGET_SET_FOR_QTI_AUDIO_WITHOUT_SMS:
+                targetResourceId = R.array.qti_incoming_call_widget_audio_without_sms_targets;
+                targetDescriptionsResourceId =
+                        R.array.qti_incoming_call_widget_audio_without_sms_target_descriptions;
+                directionDescriptionsResourceId = R.array
+                        .qti_incoming_call_widget_audio_without_sms_direction_descriptions;
+                handleDrawableResourceId = R.drawable.ic_incall_audio_handle;
+                break;
+
             case TARGET_SET_FOR_AUDIO_WITHOUT_SMS:
             default:
                 targetResourceId = R.array.incoming_call_widget_audio_without_sms_targets;

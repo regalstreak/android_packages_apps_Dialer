@@ -95,6 +95,7 @@ public class GlowPadWrapper extends GlowPadView implements GlowPadView.OnTrigger
     @Override
     public void onGrabbed(View v, int handle) {
         Log.d(this, "onGrabbed()");
+        InCallPresenter.getInstance().notifyAnswerViewGrabChanged(true);
         stopPing();
     }
 
@@ -106,6 +107,7 @@ public class GlowPadWrapper extends GlowPadView implements GlowPadView.OnTrigger
         } else {
             startPing();
         }
+        InCallPresenter.getInstance().notifyAnswerViewGrabChanged(false);
     }
 
     @Override
@@ -115,17 +117,31 @@ public class GlowPadWrapper extends GlowPadView implements GlowPadView.OnTrigger
         if (resId == R.drawable.ic_lockscreen_answer) {
             mAnswerFragment.onAnswer(VideoProfile.STATE_AUDIO_ONLY, getContext());
             mTargetTriggered = true;
-        } else if (resId == R.drawable.ic_lockscreen_decline) {
+        } else if (resId == R.drawable.ic_lockscreen_decline ||
+                resId == R.drawable.ic_enhance_decline_video) {
             mAnswerFragment.onDecline(getContext());
             mTargetTriggered = true;
         } else if (resId == R.drawable.ic_lockscreen_text) {
             mAnswerFragment.onText();
             mTargetTriggered = true;
-        } else if (resId == R.drawable.ic_videocam || resId == R.drawable.ic_lockscreen_answer_video) {
+        } else if (resId == R.drawable.ic_videocam ||
+                resId == R.drawable.ic_lockscreen_answer_video ||
+                resId == R.drawable.ic_enhance_answer_video) {
             mAnswerFragment.onAnswer(mVideoState, getContext());
             mTargetTriggered = true;
         } else if (resId == R.drawable.ic_lockscreen_decline_video) {
             mAnswerFragment.onDeclineUpgradeRequest(getContext());
+            mTargetTriggered = true;
+        } else if (resId == R.drawable.qti_ic_lockscreen_answer_tx_video ||
+                resId == R.drawable.ic_enhance_answer_tx_video) {
+            mAnswerFragment.onAnswer(VideoProfile.STATE_TX_ENABLED, getContext());
+            mTargetTriggered = true;
+        } else if (resId == R.drawable.qti_ic_lockscreen_answer_rx_video ||
+                resId == R.drawable.ic_enhance_answer_rx_video) {
+            mAnswerFragment.onAnswer(VideoProfile.STATE_RX_ENABLED, getContext());
+            mTargetTriggered = true;
+        } else if (resId == R.drawable.qti_ic_lockscreen_deflect) {
+            mAnswerFragment.onDeflect(getContext());
             mTargetTriggered = true;
         } else {
             // Code should never reach here.

@@ -50,6 +50,8 @@ import java.util.List;
 
 /** Handles asynchronous queries to the call log. */
 public class CallLogQueryHandler extends NoNullCursorAsyncQueryHandler {
+    private static final String[] EMPTY_STRING_ARRAY = new String[0];
+
     private static final String TAG = "CallLogQueryHandler";
     private static final int NUM_LOGS_TO_DISPLAY = 1000;
 
@@ -75,6 +77,11 @@ public class CallLogQueryHandler extends NoNullCursorAsyncQueryHandler {
      * type. Exception: excludes Calls.VOICEMAIL_TYPE.
      */
     public static final int CALL_TYPE_ALL = -1;
+
+    /**
+     * To specify all slots.
+     */
+    public static final int CALL_SUB_ALL = -1;
 
     private final WeakReference<Listener> mListener;
 
@@ -155,8 +162,31 @@ public class CallLogQueryHandler extends NoNullCursorAsyncQueryHandler {
         }
     }
 
+    public void fetchCalls(int callType, long newerThan, int sub) {
+        cancelFetch();
+        if (PermissionsUtil.hasPhonePermissions(mContext)) {
+            fetchCalls(QUERY_CALLLOG_TOKEN, callType, false /* newOnly */, newerThan, sub);
+        } else {
+            updateAdapterData(null);
+        }
+    }
+
     public void fetchCalls(int callType) {
         fetchCalls(callType, 0);
+    }
+
+    public void fetchCalls(String filter) {
+        cancelFetch();
+        fetchCalls(QUERY_CALLLOG_TOKEN, filter);
+    }
+
+    public void fetchCalls(int token, String filter) {
+        String selection = "(" + Calls.NUMBER + " like '%" + filter
+                + "%'  or  " + Calls.CACHED_NAME + " like '%" + filter + "%' )";
+
+        startQuery(token, null, Calls.CONTENT_URI_WITH_VOICEMAIL,
+                CallLogQuery._PROJECTION, selection, null,
+                Calls.DEFAULT_SORT_ORDER);
     }
 
     public void fetchVoicemailStatus() {
@@ -195,13 +225,35 @@ public class CallLogQueryHandler extends NoNullCursorAsyncQueryHandler {
         }
 
         if (callType > CALL_TYPE_ALL) {
-            where.append(" AND (").append(Calls.TYPE).append(" = ?)");
+            if (where.length() > 0) {
+                where.append(" AND ");
+            }
+
+            if ((callType == Calls.INCOMING_TYPE) || (callType == Calls.OUTGOING_TYPE)
+                    || (callType == Calls.MISSED_TYPE)) {
+                where.append(String.format("(%s = ? OR %s = ? OR %s = ?)",
+                        Calls.TYPE, Calls.TYPE, Calls.TYPE));
+            } else {
+                where.append(String.format("(%s = ?)", Calls.TYPE));
+            }
             selectionArgs.add(Integer.toString(callType));
+            if (callType == Calls.INCOMING_TYPE) {
+                selectionArgs.add(Integer.toString(AppCompatConstants.INCOMING_IMS_TYPE));
+                selectionArgs.add(Integer.toString(AppCompatConstants.INCOMING_WIFI_TYPE));
+            } else if (callType == Calls.OUTGOING_TYPE) {
+                selectionArgs.add(Integer.toString(AppCompatConstants.OUTGOING_IMS_TYPE));
+                selectionArgs.add(Integer.toString(AppCompatConstants.OUTGOING_WIFI_TYPE));
+            } else if (callType == Calls.MISSED_TYPE) {
+                selectionArgs.add(Integer.toString(AppCompatConstants.MISSED_IMS_TYPE));
+                selectionArgs.add(Integer.toString(AppCompatConstants.MISSED_WIFI_TYPE));
+            }
         } else {
+            // Add a clause to fetch only items of type voicemail.
             where.append(" AND NOT ");
             where.append("(" + Calls.TYPE + " = " + AppCompatConstants.CALLS_VOICEMAIL_TYPE + ")");
         }
 
+        // Add a clause to fetch only items newer than the requested date
         if (newerThan > 0) {
             where.append(" AND (").append(Calls.DATE).append(" > ?)");
             selectionArgs.add(Long.toString(newerThan));
@@ -215,6 +267,74 @@ public class CallLogQueryHandler extends NoNullCursorAsyncQueryHandler {
         startQuery(token, null, uri, CallLogQuery._PROJECTION, selection, selectionArgs.toArray(
                 new String[selectionArgs.size()]), Calls.DEFAULT_SORT_ORDER);
     }
+
+    private void fetchCalls(int token, int callType, boolean newOnly,
+            long newerThan, int sub) {
+        // We need to check for NULL explicitly otherwise entries with where READ is NULL
+        // may not match either the query or its negation.
+        // We consider the calls that are not yet consumed (i.e. IS_READ = 0) as "new".
+        StringBuilder where = new StringBuilder();
+        List<String> selectionArgs = Lists.newArrayList();
+
+        // Ignore voicemails marked as deleted
+        where.append(Voicemails.DELETED);
+        where.append(" = 0");
+
+        if (newOnly) {
+            where.append(" AND ");
+            where.append(Calls.NEW);
+            where.append(" = 1");
+        }
+
+        if (callType > CALL_TYPE_ALL) {
+            where.append(" AND ");
+            if ((callType == Calls.INCOMING_TYPE) || (callType == Calls.OUTGOING_TYPE)
+                    || (callType == Calls.MISSED_TYPE)) {
+                where.append(String.format("(%s = ? OR %s = ? OR %s = ?)",
+                        Calls.TYPE, Calls.TYPE, Calls.TYPE));
+            } else {
+                // Add a clause to fetch only items of type voicemail.
+                where.append(String.format("(%s = ?)", Calls.TYPE));
+            }
+            // Add a clause to fetch only items newer than the requested date
+            selectionArgs.add(Integer.toString(callType));
+            if (callType == Calls.INCOMING_TYPE) {
+                selectionArgs.add(Integer.toString(AppCompatConstants.INCOMING_IMS_TYPE));
+                selectionArgs.add(Integer.toString(AppCompatConstants.INCOMING_WIFI_TYPE));
+            } else if (callType == Calls.OUTGOING_TYPE) {
+                selectionArgs.add(Integer.toString(AppCompatConstants.OUTGOING_IMS_TYPE));
+                selectionArgs.add(Integer.toString(AppCompatConstants.OUTGOING_WIFI_TYPE));
+            } else if (callType == Calls.MISSED_TYPE) {
+                selectionArgs.add(Integer.toString(AppCompatConstants.MISSED_IMS_TYPE));
+                selectionArgs.add(Integer.toString(AppCompatConstants.MISSED_WIFI_TYPE));
+            }
+        } else {
+            where.append(" AND NOT ");
+            where.append("(" + Calls.TYPE + " = " + Calls.VOICEMAIL_TYPE + ")");
+        }
+
+        if (sub > CALL_SUB_ALL) {
+            where.append(" AND ");
+            where.append(String.format("(%s = ?)", Calls.PHONE_ACCOUNT_ID));
+            selectionArgs.add(Integer.toString(sub));
+        }
+
+        if (newerThan > 0) {
+            where.append(" AND ");
+            where.append(String.format("(%s > ?)", Calls.DATE));
+            selectionArgs.add(Long.toString(newerThan));
+        }
+
+        final int limit = (mLogLimit == -1) ? NUM_LOGS_TO_DISPLAY : mLogLimit;
+        final String selection = where.length() > 0 ? where.toString() : null;
+        Uri uri = TelecomUtil.getCallLogUri(mContext).buildUpon()
+                .appendQueryParameter(Calls.LIMIT_PARAM_KEY, Integer.toString(limit))
+                .build();
+        startQuery(token, null, uri,
+                CallLogQuery._PROJECTION, selection, selectionArgs.toArray(EMPTY_STRING_ARRAY),
+                Calls.DEFAULT_SORT_ORDER);
+    }
+
 
     /** Cancel any pending fetch request. */
     private void cancelFetch() {

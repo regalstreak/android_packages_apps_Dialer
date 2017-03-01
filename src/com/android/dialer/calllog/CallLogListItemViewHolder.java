@@ -20,6 +20,8 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
+import android.graphics.PorterDuff;
+import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.provider.CallLog;
 import android.provider.CallLog.Calls;
@@ -33,6 +35,7 @@ import android.text.TextUtils;
 import android.view.ContextMenu;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewStub;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -50,6 +53,7 @@ import com.android.contacts.common.testing.NeededForTesting;
 import com.android.contacts.common.util.UriUtils;
 import com.android.dialer.DialtactsActivity;
 import com.android.dialer.R;
+import com.android.dialer.EnrichedCallHandler;
 import com.android.dialer.calllog.calllogcache.CallLogCache;
 import com.android.dialer.compat.FilteredNumberCompat;
 import com.android.dialer.database.FilteredNumberAsyncQueryHandler;
@@ -58,14 +62,19 @@ import com.android.dialer.filterednumber.FilteredNumbersUtil;
 import com.android.dialer.logging.Logger;
 import com.android.dialer.logging.ScreenEvent;
 import com.android.dialer.service.ExtendedBlockingButtonRenderer;
+import com.android.dialer.util.AppCompatConstants;
 import com.android.dialer.util.DialerUtils;
 import com.android.dialer.util.PhoneNumberUtil;
+import com.android.dialer.util.PresenceHelper;
 import com.android.dialer.voicemail.VoicemailPlaybackLayout;
 import com.android.dialer.voicemail.VoicemailPlaybackPresenter;
 import com.android.dialerbind.ObjectFactory;
 import com.google.common.collect.Lists;
 
 import java.util.List;
+
+import org.codeaurora.ims.utils.QtiImsExtUtils;
+import org.codeaurora.presenceserv.IPresenceService;
 
 /**
  * This is an object containing references to views contained by the call log list item. This
@@ -104,6 +113,7 @@ public final class CallLogListItemViewHolder extends RecyclerView.ViewHolder
     public View detailsButtonView;
     public View callWithNoteButtonView;
     public ImageView workIconView;
+    public ImageView videoCallIconView;
 
     /**
      * The row Id for the first call associated with the call log entry.  Used as a key for the
@@ -193,6 +203,11 @@ public final class CallLogListItemViewHolder extends RecyclerView.ViewHolder
     public boolean isBusiness;
 
     /**
+     * Whether this row is for a video call or not.
+     */
+    public boolean isVideoCall = false;
+
+    /**
      * The contact info for the contact displayed in this list item.
      */
     public ContactInfo info;
@@ -221,6 +236,7 @@ public final class CallLogListItemViewHolder extends RecyclerView.ViewHolder
 
     private View.OnClickListener mExpandCollapseListener;
     private boolean mVoicemailPrimaryActionButtonClicked;
+    private EnrichedCallLogListItemHelper mEnrichedHelper;
 
     private CallLogListItemViewHolder(
             Context context,
@@ -418,6 +434,19 @@ public final class CallLogListItemViewHolder extends RecyclerView.ViewHolder
             videoCallButtonView = actionsView.findViewById(R.id.video_call_action);
             videoCallButtonView.setOnClickListener(this);
 
+            // rich call feature integration
+            if (EnrichedCallHandler.getInstance().isRcsFeatureEnabled()) {
+                mEnrichedHelper = new EnrichedCallLogListItemHelper(mContext);
+                mEnrichedHelper.inflateEnrichedItem((ViewGroup) actionsView);
+                mEnrichedHelper.setEnrichedGetNumberHelper(
+                        new EnrichedCallLogListItemHelper.EnrichedGetNumberHelper() {
+                    @Override
+                    public String getNumber() {
+                        return number;
+                    }
+                });
+            }
+
             createNewContactButtonView = actionsView.findViewById(R.id.create_new_contact_action);
             createNewContactButtonView.setOnClickListener(this);
 
@@ -470,12 +499,57 @@ public final class CallLogListItemViewHolder extends RecyclerView.ViewHolder
                 primaryActionButtonView.setContentDescription(TextUtils.expandTemplate(
                         mContext.getString(R.string.description_call_action),
                         nameOrNumber));
-                primaryActionButtonView.setImageResource(R.drawable.ic_call_24dp);
+
+                if (QtiImsExtUtils.isCarrierOneSupported()) {
+                    final Drawable imsDrawable = getLteOrWifiDrawable(callType, isVideoCall);
+                    if (imsDrawable != null) {
+                        primaryActionButtonView.setImageDrawable(imsDrawable);
+                        primaryActionButtonView.setColorFilter(mContext.getResources().getColor(
+                                android.R.color.white),
+                                PorterDuff.Mode.MULTIPLY);
+                    } else {
+                        primaryActionButtonView.setImageResource(R.drawable.ic_call_24dp);
+                        primaryActionButtonView.setColorFilter(mContext.getResources().getColor(
+                                R.color.call_log_list_item_primary_action_icon_tint),
+                                PorterDuff.Mode.MULTIPLY);
+                    }
+                } else {
+                    primaryActionButtonView.setImageResource(R.drawable.ic_call_24dp);
+                }
                 primaryActionButtonView.setVisibility(View.VISIBLE);
             } else {
                 primaryActionButtonView.setTag(null);
                 primaryActionButtonView.setVisibility(View.GONE);
             }
+        }
+    }
+
+    /**
+     * Returns drawable for Carrier One if it is LTE or WiFi type call.
+     *  @param callType The type of call for the current call log entry.
+     *  @param isVideoCall Whether current call log entry is video call.
+     */
+    private Drawable getLteOrWifiDrawable(int callType, boolean isVideoCall) {
+        Resources resources = mContext.getResources();
+        switch(callType) {
+            case AppCompatConstants.INCOMING_IMS_TYPE:
+            case AppCompatConstants.OUTGOING_IMS_TYPE:
+            case AppCompatConstants.MISSED_IMS_TYPE:
+                if (isVideoCall) {
+                    return resources.getDrawable(R.drawable.vilte);
+                } else {
+                    return resources.getDrawable(R.drawable.volte);
+                }
+            case AppCompatConstants.INCOMING_WIFI_TYPE:
+            case AppCompatConstants.OUTGOING_WIFI_TYPE:
+            case AppCompatConstants.MISSED_WIFI_TYPE:
+                if (isVideoCall) {
+                    return resources.getDrawable(R.drawable.viwifi);
+                } else {
+                    return resources.getDrawable(R.drawable.vowifi);
+                }
+            default:
+                return null;
         }
     }
 
@@ -504,10 +578,14 @@ public final class CallLogListItemViewHolder extends RecyclerView.ViewHolder
         } else {
             callButtonView.setVisibility(View.GONE);
         }
-
-        // If one of the calls had video capabilities, show the video call button.
-        if (mCallLogCache.isVideoEnabled() && canPlaceCallToNumber &&
-                phoneCallDetailsViews.callTypeIcons.isVideoShown()) {
+        boolean isPresenceEnabled = mContext.getResources().getBoolean(
+                R.bool.config_regional_presence_enable);
+        boolean showVideoCallBtn = isPresenceEnabled ? PresenceHelper.startAvailabilityFetch(number)
+                : phoneCallDetailsViews.callTypeIcons.isVideoShown();
+        //If presence is enabled,only both of sides had video capabilities,
+        //show the video call button,If not, one of the calls had video capabilities,
+        //the video call button will be shown.
+        if (mCallLogCache.isVideoEnabled() && canPlaceCallToNumber && showVideoCallBtn) {
             videoCallButtonView.setTag(IntentProvider.getReturnVideoCallIntentProvider(number));
             videoCallButtonView.setVisibility(View.VISIBLE);
         } else {
@@ -607,6 +685,9 @@ public final class CallLogListItemViewHolder extends RecyclerView.ViewHolder
         if (show) {
             // Inflate the view stub if necessary, and wire up the event handlers.
             inflateActionViewStub();
+            if (mEnrichedHelper != null) {
+                mEnrichedHelper.showActions();
+            }
 
             actionsView.setVisibility(View.VISIBLE);
             actionsView.setAlpha(1.0f);
@@ -691,6 +772,9 @@ public final class CallLogListItemViewHolder extends RecyclerView.ViewHolder
             if (intentProvider != null) {
                 final Intent intent = intentProvider.getIntent(mContext);
                 // See IntentProvider.getCallDetailIntentProvider() for why this may be null.
+                if (DialerUtils.isConferenceURICallLog(number, postDialDigits)) {
+                    intent.putExtra("org.codeaurora.extra.DIAL_CONFERENCE_URI", true);
+                }
                 if (intent != null) {
                     DialerUtils.startActivityWithErrorToast(mContext, intent);
                 }

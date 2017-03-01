@@ -32,7 +32,9 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
+import android.telephony.CarrierConfigManager;
 import android.telephony.PhoneNumberUtils;
+import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Log;
@@ -74,6 +76,9 @@ public class SpecialCharSequenceMgr {
     private static final String MMI_IMEI_DISPLAY = "*#06#";
     private static final String MMI_REGULATORY_INFO_DISPLAY = "*#07#";
 
+    private static final String PRL_VERSION_DISPLAY = "*#0000#";
+
+    private static final int IMEI_14_DIGIT = 14;
     /**
      * Remembers the previous {@link QueryHandler} and cancel the operation when needed, to
      * prevent possible crash.
@@ -137,6 +142,7 @@ public class SpecialCharSequenceMgr {
         String dialString = PhoneNumberUtils.stripSeparators(input);
 
         if (handleDeviceIdDisplay(context, dialString)
+                || handlePRLVersion(context, dialString)
                 || handleRegulatoryInfoDisplay(context, dialString)
                 || handlePinEntry(context, dialString)
                 || handleAdnEntry(context, dialString, textField)
@@ -144,6 +150,20 @@ public class SpecialCharSequenceMgr {
             return true;
         }
 
+        return false;
+    }
+
+    static private boolean handlePRLVersion(Context context, String input) {
+        if (input.equals(PRL_VERSION_DISPLAY)) {
+            try {
+                Intent intent = new Intent("android.intent.action.ENGINEER_MODE_DEVICEINFO");
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+                return true;
+            } catch (ActivityNotFoundException e) {
+                Log.d(TAG, "no activity to handle showing device info");
+            }
+        }
         return false;
     }
 
@@ -182,7 +202,15 @@ public class SpecialCharSequenceMgr {
             context.sendBroadcast(intent);
             return true;
         }
-
+        if (!TextUtils.isEmpty(context.getString(R.string.oem_key_code_action))) {
+            if (len > 10 && !input.startsWith("*#*#")
+                   && input.startsWith("*#") && input.endsWith("#")) {
+                Intent intent = new Intent(context.getString(R.string.oem_key_code_action));
+                intent.putExtra(context.getString(R.string.oem_code), input);
+                context.sendBroadcast(intent);
+                return true;
+            }
+        }
         return false;
     }
 
@@ -336,6 +364,26 @@ public class SpecialCharSequenceMgr {
                             "getDeviceId", Integer.TYPE)) {
                 for (int slot = 0; slot < telephonyManager.getPhoneCount(); slot++) {
                     String deviceId = telephonyManager.getDeviceId(slot);
+                    boolean enable14DigitImei = false;
+                    try {
+                        CarrierConfigManager configManager =
+                                (CarrierConfigManager) context.getSystemService(
+                                 Context.CARRIER_CONFIG_SERVICE);
+                        int[] subIds = SubscriptionManager.getSubId(slot);
+                        if (configManager != null &&
+                                configManager.getConfigForSubId(subIds[0]) != null) {
+                            enable14DigitImei =
+                                    configManager.getConfigForSubId(subIds[0]).getBoolean(
+                                    "config_enable_display_14digit_imei");
+                        }
+                    } catch(RuntimeException ex) {
+                        //do Nothing
+                        Log.e(TAG, "Config for 14 digit IMEI not found: " + ex);
+                    }
+                    if (enable14DigitImei && !TextUtils.isEmpty(deviceId)
+                           && deviceId.length() > IMEI_14_DIGIT) {
+                        deviceId = deviceId.substring(0, IMEI_14_DIGIT);
+                    }
                     if (!TextUtils.isEmpty(deviceId)) {
                         deviceIds.add(deviceId);
                     }

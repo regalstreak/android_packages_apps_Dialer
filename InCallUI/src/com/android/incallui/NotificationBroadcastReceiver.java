@@ -45,6 +45,8 @@ public class NotificationBroadcastReceiver extends BroadcastReceiver {
             "com.android.incallui.ACTION_ACCEPT_VIDEO_UPGRADE_REQUEST";
     public static final String ACTION_DECLINE_VIDEO_UPGRADE_REQUEST =
             "com.android.incallui.ACTION_DECLINE_VIDEO_UPGRADE_REQUEST";
+    public static final String ADD_CALL_MODE_KEY = "add_call_mode";
+    public static final String ADD_PARTICIPANT_KEY = "add_participant";
     public static final String ACTION_PULL_EXTERNAL_CALL =
             "com.android.incallui.ACTION_PULL_EXTERNAL_CALL";
     public static final String EXTRA_NOTIFICATION_ID =
@@ -57,8 +59,7 @@ public class NotificationBroadcastReceiver extends BroadcastReceiver {
 
         // TODO: Commands of this nature should exist in the CallList.
         if (action.equals(ACTION_ANSWER_VIDEO_INCOMING_CALL)) {
-            InCallPresenter.getInstance().answerIncomingCall(
-                    context, VideoProfile.STATE_BIDIRECTIONAL);
+            InCallPresenter.getInstance().answerIncomingCall(context);
         } else if (action.equals(ACTION_ANSWER_VOICE_INCOMING_CALL)) {
             InCallPresenter.getInstance().answerIncomingCall(
                     context, VideoProfile.STATE_AUDIO_ONLY);
@@ -67,9 +68,7 @@ public class NotificationBroadcastReceiver extends BroadcastReceiver {
         } else if (action.equals(ACTION_HANG_UP_ONGOING_CALL)) {
             InCallPresenter.getInstance().hangUpOngoingCall(context);
         } else if (action.equals(ACTION_ACCEPT_VIDEO_UPGRADE_REQUEST)) {
-            //TODO: Change calltype after adding support for TX and RX
-            InCallPresenter.getInstance().acceptUpgradeRequest(
-                    VideoProfile.STATE_BIDIRECTIONAL, context);
+            InCallPresenter.getInstance().acceptUpgradeRequest(context);
         } else if (action.equals(ACTION_DECLINE_VIDEO_UPGRADE_REQUEST)) {
             InCallPresenter.getInstance().declineUpgradeRequest(context);
         } else if (action.equals(ACTION_PULL_EXTERNAL_CALL)) {

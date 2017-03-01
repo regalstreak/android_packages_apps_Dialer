@@ -46,6 +46,14 @@ public class InCallVideoCallCallbackNotifier {
     private final Set<SurfaceChangeListener> mSurfaceChangeListeners = Collections.newSetFromMap(
             new ConcurrentHashMap<SurfaceChangeListener, Boolean>(8, 0.9f, 1));
 
+    /* Invalid call session event */
+    public static final int CALL_SESSION_INVALID_EVENT = -1;
+
+    /** Cache the call session event for cases where the call is in background and listeners
+     * are unregistered.
+     */
+    private int mCallSessionEvent = CALL_SESSION_INVALID_EVENT;
+
     /**
      * Static singleton accessor method.
      */
@@ -88,6 +96,22 @@ public class InCallVideoCallCallbackNotifier {
     public void addVideoEventListener(VideoEventListener listener) {
         Preconditions.checkNotNull(listener);
         mVideoEventListeners.add(listener);
+    }
+
+    /**
+     * Adds a new {@link VideoEventListener} and notifies the entity that registered
+     * if flag notify is true.
+     *
+     * @param listener The listener.
+     * @param notify true or false
+     */
+    public void addVideoEventListener(VideoEventListener listener, boolean notify) {
+        addVideoEventListener(listener);
+
+        // Notify registered listeners of cached call session event if it's a valid value
+        if (notify && mCallSessionEvent != CALL_SESSION_INVALID_EVENT) {
+            callSessionEvent(mCallSessionEvent);
+        }
     }
 
     /**
@@ -135,13 +159,25 @@ public class InCallVideoCallCallbackNotifier {
     }
 
     /**
+     * Inform listeners of an unsuccessful response to a video request for a call.
+     *
+     * @param call The call.
+     */
+    public void upgradeToVideoFail(int status, Call call) {
+        for (SessionModificationListener listener : mSessionModificationListeners) {
+            listener.onUpgradeToVideoFail(status, call);
+        }
+    }
+
+    /**
      * Inform listeners of a call session event.
      *
      * @param event The call session event.
      */
     public void callSessionEvent(int event) {
+        mCallSessionEvent = event;
         for (VideoEventListener listener : mVideoEventListeners) {
-            listener.onCallSessionEvent(event);
+            listener.onCallSessionEvent(mCallSessionEvent);
         }
     }
 
@@ -217,6 +253,15 @@ public class InCallVideoCallCallbackNotifier {
          * @param videoState The requested video state.
          */
         public void onUpgradeToVideoRequest(Call call, int videoState);
+
+        /**
+         * Called when a request to a peer to upgrade an audio-only call to a video call is
+         * NOT successful. This can be if the peer chooses rejects the the video call, or if the
+         * peer does not support video calling, or if there is some error in sending the request.
+         *
+         * @param call The call the request was successful for.
+         */
+        public void onUpgradeToVideoFail(int status, Call call);
     }
 
     /**

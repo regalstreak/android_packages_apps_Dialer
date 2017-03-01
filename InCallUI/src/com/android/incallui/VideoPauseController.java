@@ -29,8 +29,9 @@ import android.telecom.VideoProfile;
  * This class is responsible for generating video pause/resume requests when the InCall UI is sent
  * to the background and subsequently brought back to the foreground.
  */
-class VideoPauseController implements InCallStateListener, IncomingCallListener {
-    private static final String TAG = "VideoPauseController";
+class VideoPauseController implements InCallStateListener, IncomingCallListener,
+        InCallUiStateNotifierListener {
+    private static final String TAG = "VideoPauseController:";
 
     /**
      * Keeps track of the current active/foreground call.
@@ -106,6 +107,7 @@ class VideoPauseController implements InCallStateListener, IncomingCallListener 
         mInCallPresenter = Preconditions.checkNotNull(inCallPresenter);
         mInCallPresenter.addListener(this);
         mInCallPresenter.addIncomingCallListener(this);
+        InCallUiStateNotifier.getInstance().addListener(this);
     }
 
     /**
@@ -114,6 +116,7 @@ class VideoPauseController implements InCallStateListener, IncomingCallListener 
      */
     public void tearDown() {
         log("tearDown...");
+        InCallUiStateNotifier.getInstance().removeListener(this);
         mInCallPresenter.removeListener(this);
         mInCallPresenter.removeIncomingCallListener(this);
         clear();
@@ -194,11 +197,10 @@ class VideoPauseController implements InCallStateListener, IncomingCallListener 
         Preconditions.checkState(!areSame(call, mPrimaryCallContext));
         final boolean canVideoPause = VideoUtils.canVideoPause(call);
 
-        if ((isIncomingCall(mPrimaryCallContext) || isDialing(mPrimaryCallContext) ||
-                (call != null && VideoProfile.isPaused(call.getVideoState())))
+        if ((isIncomingCall(mPrimaryCallContext) || isDialing(mPrimaryCallContext))
                 && canVideoPause && !mIsInBackground) {
             // Send resume request for the active call, if user rejects incoming call, ends dialing
-            // call, or the call was previously in a paused state and UI is in the foreground.
+            // call and UI is in the foreground.
             sendRequest(call, true);
         } else if (isIncomingCall(call) && canVideoPause(mPrimaryCallContext)) {
             // Send pause request if there is an active video call, and we just received a new
@@ -243,10 +245,13 @@ class VideoPauseController implements InCallStateListener, IncomingCallListener 
     }
 
     /**
-     * Called when UI goes in/out of the foreground.
-     * @param showing true if UI is in the foreground, false otherwise.
+     * This method gets invoked when visibility of InCallUI is changed. For eg.
+     * when UE moves in/out of the foreground, display either turns ON/OFF
+     * @param showing true if InCallUI is visible, false  otherwise.
      */
+    @Override
     public void onUiShowing(boolean showing) {
+        log("onUiShowing, showing = " + showing);
         // Only send pause/unpause requests if we are in the INCALL state.
         if (mInCallPresenter == null) {
             return;
@@ -267,6 +272,11 @@ class VideoPauseController implements InCallStateListener, IncomingCallListener 
     private void onResume(boolean isInCall) {
         log("onResume");
 
+        if (!mIsInBackground) {
+            log("onResume, Ignoring... already resumed");
+            return;
+        }
+
         mIsInBackground = false;
         if (canVideoPause(mPrimaryCallContext) && isInCall) {
             sendRequest(mPrimaryCallContext.getCall(), true);
@@ -282,6 +292,11 @@ class VideoPauseController implements InCallStateListener, IncomingCallListener 
      */
     private void onPause(boolean isInCall) {
         log("onPause");
+
+        if (mIsInBackground) {
+            log("onPause, Ignoring... already paused");
+            return;
+        }
 
         mIsInBackground = true;
         if (canVideoPause(mPrimaryCallContext) && isInCall) {
@@ -366,7 +381,7 @@ class VideoPauseController implements InCallStateListener, IncomingCallListener 
      * @return {@code true} if the call is in incoming or waiting state, {@code false} otherwise.
      */
     private static boolean isIncomingCall(CallContext call) {
-        return call != null && isIncomingCall(call.getCall());
+        return call != null && isIncoming(call.getState());
     }
 
     /**
@@ -376,8 +391,17 @@ class VideoPauseController implements InCallStateListener, IncomingCallListener 
      * @return {@code true} if the call is in incoming or waiting state, {@code false} otherwise.
      */
     private static boolean isIncomingCall(Call call) {
-        return call != null && (call.getState() == Call.State.CALL_WAITING
-                || call.getState() == Call.State.INCOMING);
+        return call != null && isIncoming(call.getState());
+    }
+
+    /**
+     * Determines if a call state is incoming/waiting.
+     *
+     * @param state The call state
+     * @return {@code true} if the state is incoming or waiting, {@code false} otherwise.
+     */
+    private static boolean isIncoming(int state) {
+        return state == Call.State.CALL_WAITING || state == Call.State.INCOMING;
     }
 
     /**

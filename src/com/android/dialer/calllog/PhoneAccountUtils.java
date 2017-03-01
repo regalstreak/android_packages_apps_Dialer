@@ -18,6 +18,7 @@ package com.android.dialer.calllog;
 
 import android.content.ComponentName;
 import android.content.Context;
+import android.graphics.drawable.Drawable;
 import android.support.annotation.Nullable;
 import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
@@ -66,6 +67,17 @@ public class PhoneAccountUtils {
     }
 
     /**
+      *Extract account Icon from PhoneAccount object.
+      */
+    public static Drawable getAccountIcon(Context context, PhoneAccountHandle phoneAccount) {
+        final PhoneAccount account = getAccountOrNull(context, phoneAccount);
+        if (account == null) {
+            return null;
+        }
+        return account.getIcon().loadDrawable(context);
+    }
+
+    /**
      * Extract account label from PhoneAccount object.
      */
     @Nullable
@@ -107,9 +119,9 @@ public class PhoneAccountUtils {
      * single registered and enabled account, return null.
      */
     @Nullable
-    private static PhoneAccount getAccountOrNull(Context context,
+    public static PhoneAccount getAccountOrNull(Context context,
             @Nullable PhoneAccountHandle accountHandle) {
-        if (TelecomUtil.getCallCapablePhoneAccounts(context).size() <= 1) {
+        if (TelecomUtil.getCallCapablePhoneAccounts(context).size() < 1) {
             return null;
         }
         return TelecomUtil.getPhoneAccount(context, accountHandle);

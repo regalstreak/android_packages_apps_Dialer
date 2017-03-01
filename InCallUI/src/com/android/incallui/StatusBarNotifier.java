@@ -38,15 +38,21 @@ import android.media.AudioAttributes;
 import android.net.Uri;
 import android.provider.ContactsContract.Contacts;
 import android.support.annotation.Nullable;
+import android.os.SystemClock;
 import android.telecom.Call.Details;
 import android.telecom.PhoneAccount;
 import android.telecom.TelecomManager;
+import android.telecom.VideoProfile;
+import android.telephony.TelephonyManager;
+import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
 import android.text.BidiFormatter;
 import android.text.TextDirectionHeuristics;
 import android.text.TextUtils;
 
 import com.android.contacts.common.ContactsUtils;
 import com.android.contacts.common.ContactsUtils.UserType;
+import com.android.contacts.common.GeoUtil;
 import com.android.contacts.common.preference.ContactsPreferences;
 import com.android.contacts.common.testing.NeededForTesting;
 import com.android.contacts.common.util.BitmapUtil;
@@ -61,6 +67,7 @@ import com.android.incallui.ringtone.InCallTonePlayer;
 import com.android.incallui.ringtone.ToneGeneratorFactory;
 
 import java.util.Objects;
+import org.codeaurora.ims.QtiCallConstants;
 
 /**
  * This class adds Notifications to the status bar for the in-call experience.
@@ -82,9 +89,11 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
     @Nullable private ContactsPreferences mContactsPreferences;
     private final ContactInfoCache mContactInfoCache;
     private final NotificationManager mNotificationManager;
+    private final TelephonyManager mTelephonyManager;
     private final DialerRingtoneManager mDialerRingtoneManager;
     private int mCurrentNotification = NOTIFICATION_NONE;
     private int mCallState = Call.State.INVALID;
+    private int mVideoState = VideoProfile.STATE_AUDIO_ONLY;
     private int mSavedIcon = 0;
     private String mSavedContent = null;
     private Bitmap mSavedLargeIcon;
@@ -92,12 +101,19 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
     private String mCallId = null;
     private InCallState mInCallState;
     private Uri mRingtone;
+    private static final String EXTRA_KEY_SHOW = "showCallStatusBar";
+    private static final String EXTRA_KEY_CALL_STATE = "callState";
+    private static final String EXTRA_KEY_CHRONOMETER_TIME = "baseChronometerMillis";
+    private static final String EXTRA_KEY_AUDIO_MODE = "audioMode";
+    private static final String EXTRA_KEY_MUTE = "mute";
 
     public StatusBarNotifier(Context context, ContactInfoCache contactInfoCache) {
         Preconditions.checkNotNull(context);
         mContext = context;
         mContactsPreferences = ContactsPreferencesFactory.newContactsPreferences(mContext);
         mContactInfoCache = contactInfoCache;
+        mTelephonyManager =
+                (TelephonyManager) mContext.getSystemService(Context.TELEPHONY_SERVICE);
         mNotificationManager =
                 (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
         mDialerRingtoneManager = new DialerRingtoneManager(
@@ -114,6 +130,34 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
         Log.d(this, "onStateChange");
         mInCallState = newState;
         updateNotification(newState, callList);
+    }
+
+    private int getVoWiFiQualityIcon(int voWifiCallQuality) {
+        switch (voWifiCallQuality) {
+            case QtiCallConstants.VOWIFI_QUALITY_EXCELLENT:
+                return R.drawable.vowifi_in_call_good;
+
+            case QtiCallConstants.VOWIFI_QUALITY_FAIR:
+                return R.drawable.vowifi_in_call_fair;
+
+            case QtiCallConstants.VOWIFI_QUALITY_POOR:
+                return R.drawable.vowifi_in_call_poor;
+        }
+       return QtiCallConstants.VOWIFI_QUALITY_NONE;
+    }
+
+    private String getVoWiFiQualityText(int voWifiCallQuality) {
+        switch (voWifiCallQuality) {
+            case QtiCallConstants.VOWIFI_QUALITY_EXCELLENT:
+                return mContext.getResources().getString(R.string.vowifi_call_quality_good);
+
+            case QtiCallConstants.VOWIFI_QUALITY_FAIR:
+                return mContext.getResources().getString(R.string.vowifi_call_quality_fair);
+
+            case QtiCallConstants.VOWIFI_QUALITY_POOR:
+                return mContext.getResources().getString(R.string.vowifi_call_quality_poor);
+        }
+      return null;
     }
 
     /**
@@ -187,11 +231,48 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
         } else {
             cancelNotification();
         }
+        if (!state.isIncoming()) {
+            updateCallStatusBar(call);
+        }
+    }
+
+    public void updateCallStatusBar() {
+        CallList callList = InCallPresenter.getInstance().getCallList();
+        updateCallStatusBar(callList);
+    }
+
+    public void updateCallStatusBar(CallList callList) {
+        updateCallStatusBar(getCallToShow(callList));
+    }
+
+    private void updateCallStatusBar(Call call) {
+        Intent intent = new Intent(
+                "com.android.incallui.UPDATE_CALL_STATUS_BAR");
+        boolean isShowingInCallUi = InCallPresenter.getInstance().isShowingInCallUi();
+        boolean show = (call != null) && !isShowingInCallUi;
+        intent.putExtra(EXTRA_KEY_SHOW, show);
+        if (call != null) {
+            int state = call.getState();
+            intent.putExtra(EXTRA_KEY_CALL_STATE, state);
+            if (state == Call.State.ACTIVE) {
+                long chronometerTime = call.getConnectTimeMillis() - System.currentTimeMillis()
+                        + SystemClock.elapsedRealtime();
+                intent.putExtra(EXTRA_KEY_CHRONOMETER_TIME, chronometerTime);
+            }
+            AudioModeProvider audioModeProvider = AudioModeProvider.getInstance();
+            intent.putExtra(EXTRA_KEY_AUDIO_MODE, audioModeProvider.getAudioMode());
+            intent.putExtra(EXTRA_KEY_MUTE, audioModeProvider.getMute());
+        }
+        mContext.sendBroadcast(intent);
     }
 
     private void showNotification(final Call call) {
-        final boolean isIncoming = (call.getState() == Call.State.INCOMING ||
-                call.getState() == Call.State.CALL_WAITING);
+        final boolean isGeocoderLocationNeeded = (call.getState() == Call.State.INCOMING ||
+                call.getState() == Call.State.CALL_WAITING ||
+                call.getState() == Call.State.DIALING ||
+                call.getState() == Call.State.CONNECTING ||
+                call.getState() == Call.State.SELECT_PHONE_ACCOUNT);
+        Log.d(this, "showNotification isGeocoderLocationNeeded = " + isGeocoderLocationNeeded);
         if (!TextUtils.isEmpty(mCallId)) {
             CallList.getInstance().removeCallUpdateListener(mCallId, this);
         }
@@ -203,7 +284,7 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
         // This callback will always get called immediately and synchronously with whatever data
         // it has available, and may make a subsequent call later (same thread) if it had to
         // call into the contacts provider for more data.
-        mContactInfoCache.findInfo(call, isIncoming, new ContactInfoCacheCallback() {
+        mContactInfoCache.findInfo(call, isGeocoderLocationNeeded, new ContactInfoCacheCallback() {
             @Override
             public void onContactInfoComplete(String callId, ContactCacheEntry entry) {
                 Call call = CallList.getInstance().getCallById(callId);
@@ -241,29 +322,49 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
         final int callState = call.getState();
 
         // Check if data has changed; if nothing is different, don't issue another notification.
-        final int iconResId = getIconToDisplay(call);
+        final int iconResId;
         Bitmap largeIcon = getLargeIconToDisplay(contactInfo, call);
-        final String content =
+        String content =
                 getContentString(call, contactInfo.userType);
+        int wifiQualityValue = call.getWifiQuality();
+        if (wifiQualityValue != QtiCallConstants.VOWIFI_QUALITY_NONE) {
+            iconResId = getVoWiFiQualityIcon(wifiQualityValue);
+            content += " " + getVoWiFiQualityText(wifiQualityValue);
+        } else {
+            iconResId = getIconToDisplay(call);
+        }
         final String contentTitle = getContentTitle(contactInfo, call);
 
         final boolean isVideoUpgradeRequest = call.getSessionModificationState()
                 == Call.SessionModificationState.RECEIVED_UPGRADE_TO_VIDEO_REQUEST;
+        final Call pendingAccountSelectionCall = CallList.getInstance()
+                .getWaitingForAccountCall();
         final int notificationType;
-        if (callState == Call.State.INCOMING || callState == Call.State.CALL_WAITING
-                || isVideoUpgradeRequest) {
+        if ((callState == Call.State.INCOMING || callState == Call.State.CALL_WAITING
+                || isVideoUpgradeRequest) && (!InCallPresenter.getInstance().isShowingInCallUi()
+                || pendingAccountSelectionCall != null)) {
             notificationType = NOTIFICATION_INCOMING_CALL;
         } else {
             notificationType = NOTIFICATION_IN_CALL;
         }
 
         if (!checkForChangeAndSaveData(iconResId, content, largeIcon, contentTitle, callState,
-                notificationType, contactInfo.contactRingtoneUri)) {
+                call.getVideoState(), notificationType, contactInfo.contactRingtoneUri)) {
             return;
         }
 
         if (largeIcon != null) {
             largeIcon = getRoundedIcon(largeIcon);
+        }
+
+        //set the content
+        boolean isMultiSimDevice = mTelephonyManager.isMultiSimEnabled();
+        if (isMultiSimDevice) {
+            SubscriptionInfo info =
+                    SubscriptionManager.from(mContext).getActiveSubscriptionInfo(call.getSubId());
+            if (info != null) {
+                content += " (" + info.getDisplayName() + ")";
+            }
         }
 
         /*
@@ -291,14 +392,23 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
 
         // Set the intent as a full screen intent as well if a call is incoming
         if (notificationType == NOTIFICATION_INCOMING_CALL
-                && !InCallPresenter.getInstance().isShowingInCallUi()) {
+                && (!InCallPresenter.getInstance().isShowingInCallUi() ||
+                   (pendingAccountSelectionCall != null))) {
             configureFullScreenIntent(builder, inCallPendingIntent, call);
             // Set the notification category for incoming calls
             builder.setCategory(Notification.CATEGORY_CALL);
         }
 
-        // Set the content
-        builder.setContentText(content);
+        // if enrich call and urgent the highlight text
+        // in red
+        if (InCallRcsUtils.isEnrichCall(call, mContext)) {
+            builder.setContentText(InCallRcsUtils.getEnrichContentText(
+                    mContext, call, content));
+        } else {
+            // Set the content
+            builder.setContentText(content);
+        }
+
         builder.setSmallIcon(iconResId);
         builder.setContentTitle(contentTitle);
         builder.setLargeIcon(largeIcon);
@@ -357,7 +467,7 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
             addDismissAction(builder);
             if (call.isVideoCall(mContext)) {
                 addVoiceAction(builder);
-                addVideoCallAction(builder);
+                addVideoCallAction(builder, call.getVideoState());
             } else {
                 addAnswerAction(builder);
             }
@@ -384,7 +494,7 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
      * we do not issue a new notification for the exact same data.
      */
     private boolean checkForChangeAndSaveData(int icon, String content, Bitmap largeIcon,
-            String contentTitle, int state, int notificationType, Uri ringtone) {
+            String contentTitle, int state, int videoState, int notificationType, Uri ringtone) {
 
         // The two are different:
         // if new title is not null, it should be different from saved version OR
@@ -395,8 +505,9 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
 
         // any change means we are definitely updating
         boolean retval = (mSavedIcon != icon) || !Objects.equals(mSavedContent, content)
-                || (mCallState != state) || (mSavedLargeIcon != largeIcon)
-                || contentTitleChanged || !Objects.equals(mRingtone, ringtone);
+                || (mCallState != state) || (mVideoState != videoState)
+                || (mSavedLargeIcon != largeIcon) || contentTitleChanged
+                || !Objects.equals(mRingtone, ringtone);
 
         // If we aren't showing a notification right now or the notification type is changing,
         // definitely do an update.
@@ -410,6 +521,7 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
         mSavedIcon = icon;
         mSavedContent = content;
         mCallState = state;
+        mVideoState = videoState;
         mSavedLargeIcon = largeIcon;
         mSavedContentTitle = contentTitle;
         mRingtone = ringtone;
@@ -426,17 +538,22 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
      */
     @NeededForTesting
     String getContentTitle(ContactCacheEntry contactInfo, Call call) {
-        if (call.isConferenceCall() && !call.hasProperty(Details.PROPERTY_GENERIC_CONFERENCE)) {
+        if (call.isConferenceCall() || call.hasProperty(Details.PROPERTY_GENERIC_CONFERENCE)) {
             return mContext.getResources().getString(R.string.card_title_conf_call);
         }
-
-        String preferredName = ContactDisplayUtils.getPreferredDisplayName(contactInfo.namePrimary,
-                    contactInfo.nameAlternative, mContactsPreferences);
-        if (TextUtils.isEmpty(preferredName)) {
-            return TextUtils.isEmpty(contactInfo.number) ? null : BidiFormatter.getInstance()
-                    .unicodeWrap(contactInfo.number, TextDirectionHeuristics.LTR);
+        if (TextUtils.isEmpty(contactInfo.namePrimary)) {
+            String contactNumberDisplayed = TextUtils.isEmpty(contactInfo.number) ?
+                    "" : contactInfo.number.toString();
+            String location_info = GeoUtil.getGeocodedLocationFor(mContext, contactNumberDisplayed);
+            if (!TextUtils.isEmpty(location_info)){
+                contactNumberDisplayed =  contactNumberDisplayed + " " + location_info;
+            }
+            return TextUtils.isEmpty(contactNumberDisplayed) ? null
+                    : BidiFormatter.getInstance().unicodeWrap(
+                    contactNumberDisplayed, TextDirectionHeuristics.LTR);
         }
-        return preferredName;
+
+        return contactInfo.namePrimary;
     }
 
     private void addPersonReference(Notification.Builder builder, ContactCacheEntry contactInfo,
@@ -490,13 +607,29 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
         // different calls.  So if both lines are in use, display info
         // from the foreground call.  And if there's a ringing call,
         // display that regardless of the state of the other calls.
+        int resId;
+        boolean supportsVoicePrivacy = call.hasProperty(Details.PROPERTY_HAS_CDMA_VOICE_PRIVACY);
         if (call.getState() == Call.State.ONHOLD) {
-            return R.drawable.ic_phone_paused_white_24dp;
+            if (supportsVoicePrivacy) {
+                resId = R.drawable.stat_sys_vp_phone_call_on_hold;
+            } else {
+                resId =  R.drawable.ic_phone_paused_white_24dp;
+            }
         } else if (call.getSessionModificationState()
                 == Call.SessionModificationState.RECEIVED_UPGRADE_TO_VIDEO_REQUEST) {
-            return R.drawable.ic_videocam;
+            resId =  R.drawable.ic_videocam;
+        } else {
+            if (supportsVoicePrivacy) {
+                resId =  R.drawable.stat_sys_vp_phone_call;
+            } else {
+                if (InCallRcsUtils.isEnrichCall(call, mContext)) {
+                    resId = R.drawable.ic_enrich_call_white_24dp;
+                } else {
+                    resId =  R.drawable.ic_call_white_24dp;
+                }
+            }
         }
-        return R.drawable.ic_call_white_24dp;
+        return resId;
     }
 
     /**
@@ -521,8 +654,16 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
             resId = R.string.notification_ongoing_call_wifi;
         }
 
+        if (InCallRcsUtils.isEnrichCall(call, mContext)) {
+            resId = InCallRcsUtils.getEnrichContentString(call,
+                    isIncomingOrWaiting);
+            return mContext.getString(resId);
+        }
+
         if (isIncomingOrWaiting) {
-            if (call.hasProperty(Details.PROPERTY_WIFI)) {
+            if (call.isIncomingConfCall()) {
+                resId = R.string.notification_incoming_conf_call;
+            } else if (call.hasProperty(Details.PROPERTY_WIFI)) {
                 resId = R.string.notification_incoming_call_wifi;
             } else {
                 resId = R.string.notification_incoming_call;
@@ -609,12 +750,12 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
                 hangupPendingIntent);
     }
 
-    private void addVideoCallAction(Notification.Builder builder) {
+    private void addVideoCallAction(Notification.Builder builder, int videoState) {
         Log.i(this, "Will show \"video\" action in the incoming call Notification");
 
         PendingIntent answerVideoPendingIntent = createNotificationPendingIntent(
                 mContext, ACTION_ANSWER_VIDEO_INCOMING_CALL);
-        builder.addAction(R.drawable.ic_videocam,
+        builder.addAction(QtiCallUtils.toVideoIcon(videoState),
                 mContext.getText(R.string.notification_action_answer_video),
                 answerVideoPendingIntent);
     }
@@ -684,12 +825,18 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
         // If a call is onhold during an incoming call, the call actually comes in as
         // INCOMING.  For that case *and* traditional call-waiting, we want to
         // cancel the notification.
+
+        // For DSDA, we want to cancel the notification if we get an incoming call on
+        // one sub and there is a live call on another sub.
+        CallList callList = CallList.getInstance();
         boolean isCallWaiting = (call.getState() == Call.State.CALL_WAITING ||
                 (call.getState() == Call.State.INCOMING &&
-                        CallList.getInstance().getBackgroundCall() != null));
+                (callList.getBackgroundCall() != null ||
+                callList.isAnyOtherSubActive(callList.getActiveSubId()))));
 
         if (isCallWaiting) {
-            Log.i(this, "updateInCallNotification: call-waiting! force relaunch...");
+            Log.i(this, "configureFullScreenIntent: call-waiting or dsda incoming call!"
+                    + " force relaunch. Active sub:" + callList.getActiveSubId());
             // Cancel the IN_CALL_NOTIFICATION immediately before
             // (re)posting it; this seems to force the
             // NotificationManager to launch the fullScreenIntent.
@@ -746,7 +893,7 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
      * @param sessionModificationState The new session modification state.
      */
     @Override
-    public void onSessionModificationStateChange(int sessionModificationState) {
+    public void onSessionModificationStateChange(Call call, int sessionModificationState) {
         if (sessionModificationState == Call.SessionModificationState.NO_REQUEST) {
             if (mCallId != null) {
                 CallList.getInstance().removeCallUpdateListener(mCallId, this);

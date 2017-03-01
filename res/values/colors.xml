@@ -139,4 +139,8 @@
     <color name="call_detail_footer_text_color">#616161</color>
     <color name="call_detail_footer_icon_tint">@color/call_detail_footer_text_color</color>
 
+    <color name="searchview_edittext">#59ffffff</color>
+    <color name="no_call_log">#42000000</color>
+    <color name="list_all_call">#d3000000</color>
+    <bool name="config_regional_presence_enable">false</bool>
 </resources>

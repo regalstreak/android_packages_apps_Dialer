@@ -20,7 +20,9 @@ import android.content.Context;
 import android.hardware.camera2.CameraCharacteristics;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.os.Trace;
+import android.os.RemoteException;
 import android.telecom.Call.Details;
 import android.telecom.Connection;
 import android.telecom.DisconnectCause;
@@ -29,7 +31,9 @@ import android.telecom.InCallService.VideoCall;
 import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
 import android.telecom.TelecomManager;
+import android.telephony.SubscriptionManager;
 import android.telecom.VideoProfile;
+import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
 
 import com.android.contacts.common.CallUtil;
@@ -45,6 +49,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+
+import org.codeaurora.ims.internal.IQtiImsExt;
+import org.codeaurora.ims.QtiCallConstants;
+import org.codeaurora.ims.QtiImsException;
+import org.codeaurora.ims.QtiImsExtListenerBaseImpl;
+import org.codeaurora.ims.QtiImsExtManager;
+import org.codeaurora.ims.utils.QtiImsExtUtils;
 
 /**
  * Describes a single call and its state.
@@ -357,8 +368,16 @@ public class Call {
                     List<android.telecom.Call> conferenceableCalls) {
                 update();
             }
+
+            @Override
+            public void onConnectionEvent(android.telecom.Call call, String event, Bundle extras) {
+                Log.d(this, "TelecomCallCallback onConnectionEvent call=" + call);
+                update();
+            }
     };
 
+    boolean mIsActiveSub = false;
+    public static final String ACTIVE_SUBSCRIPTION = "active_sub";
     private android.telecom.Call mTelecomCall;
     private boolean mIsEmergencyCall;
     private Uri mHandle;
@@ -381,6 +400,7 @@ public class Call {
     private String mLastForwardedNumber;
     private String mCallSubject;
     private PhoneAccountHandle mPhoneAccountHandle;
+    private long mBaseChronometerTime = 0;
 
     /**
      * Indicates whether the phone account associated with this call supports specifying a call
@@ -581,6 +601,9 @@ public class Call {
                 mCallSubject = callSubject;
             }
         }
+        if (callExtras.containsKey(ACTIVE_SUBSCRIPTION)) {
+            mIsActiveSub = callExtras.getBoolean(ACTIVE_SUBSCRIPTION);
+        }
     }
 
     /**
@@ -655,6 +678,10 @@ public class Call {
         } else {
             return mState;
         }
+    }
+
+    public int getTrueState(){
+        return mState;
     }
 
     public void setState(int state) {
@@ -742,9 +769,29 @@ public class Call {
         int supportedCapabilities = mTelecomCall.getDetails().getCallCapabilities();
 
         if ((capabilities & android.telecom.Call.Details.CAPABILITY_MERGE_CONFERENCE) != 0) {
+            if (CallList.getInstance().isDsdaEnabled()) {
+                List<android.telecom.Call> conferenceableCalls =
+                        mTelecomCall.getConferenceableCalls();
+                boolean hasConferenceableCall = false;
+                if (!conferenceableCalls.isEmpty()){
+                    int subId = getSubId();
+                    for (android.telecom.Call call : conferenceableCalls) {
+                        PhoneAccountHandle phHandle = call.getDetails().getAccountHandle();
+                        if ((phHandle != null) && ((Integer.parseInt(phHandle.getId())) == subId)) {
+                            hasConferenceableCall = true;
+                            break;
+                        }
+                    }
+                }
+                if (!hasConferenceableCall &&
+                    ((android.telecom.Call.Details.CAPABILITY_MERGE_CONFERENCE
+                            & supportedCapabilities) == 0)) {
+                    // Cannot merge calls if there are no calls to merge with.
+                    return false;
+                }
             // We allow you to merge if the capabilities allow it or if it is a call with
             // conferenceable calls.
-            if (mTelecomCall.getConferenceableCalls().isEmpty() &&
+            } else if (mTelecomCall.getConferenceableCalls().isEmpty() &&
                 ((android.telecom.Call.Details.CAPABILITY_MERGE_CONFERENCE
                         & supportedCapabilities) == 0)) {
                 // Cannot merge calls if there are no calls to merge with.
@@ -774,6 +821,22 @@ public class Call {
 
     public PhoneAccountHandle getAccountHandle() {
         return mTelecomCall == null ? null : mTelecomCall.getDetails().getAccountHandle();
+    }
+
+    public int getSubId() {
+        PhoneAccountHandle ph = getAccountHandle();
+        if (ph != null) {
+            try {
+                if (ph.getId() != null) {
+                    return Integer.parseInt(getAccountHandle().getId());
+                }
+            } catch (NumberFormatException e) {
+                Log.w(this, "sub id is not a number" + e);
+            }
+            return SubscriptionManager.getDefaultVoiceSubscriptionId();
+        } else {
+            return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+        }
     }
 
     /**
@@ -855,7 +918,9 @@ public class Call {
      * repeated calls to isEmergencyNumber.
      */
     private void updateEmergencyCallState() {
-        mIsEmergencyCall = TelecomCallUtil.isEmergencyCall(mTelecomCall);
+        Uri handle = mTelecomCall.getDetails().getHandle();
+        mIsEmergencyCall = QtiCallUtils.isEmergencyNumber
+                (handle == null ? "" : handle.getSchemeSpecificPart());
     }
 
     /**
@@ -896,6 +961,37 @@ public class Call {
      */
     public int getSessionModificationState() {
         return mSessionModificationState;
+    }
+
+    /* QtiImsExtListenerBaseImpl instance to handle call transfer response */
+    private QtiImsExtListenerBaseImpl mQtiImsInterfaceListener =
+            new QtiImsExtListenerBaseImpl() {
+
+        /* Handles call transfer response */
+        @Override
+        public void receiveCallTransferResponse(int result) {
+            Log.w(this, "receiveCallTransferResponse: " + result);
+        }
+    };
+
+    public int getTransferCapabilities() {
+        Bundle extras = getExtras();
+        return (extras == null)? 0 :
+                extras.getInt(QtiImsExtUtils.QTI_IMS_TRANSFER_EXTRA_KEY, 0);
+    }
+
+    public boolean sendCallTransferRequest(int type, String number) {
+        int phoneId = 0;
+        try {
+            Log.d(this, "sendCallTransferRequest: Phoneid-" + phoneId + " type-" + type +
+                    " number: " + number);
+            QtiImsExtManager.getInstance().sendCallTransferRequest(phoneId, type, number,
+                    mQtiImsInterfaceListener);
+        } catch (QtiImsException e) {
+            Log.e(this, "sendCallDeflectRequest exception " + e);
+            return false;
+        }
+        return true;
     }
 
     public LogState getLogState() {
@@ -961,7 +1057,8 @@ public class Call {
         }
 
         return String.format(Locale.US, "[%s, %s, %s, %s, children:%s, parent:%s, " +
-                "conferenceable:%s, videoState:%s, mSessionModificationState:%d, VideoSettings:%s]",
+                "conferenceable:%s, videoState:%s, mSessionModificationState:%d, VideoSettings:%s" +
+                ", mIsActivSub:%b]" ,
                 mId,
                 State.toString(getState()),
                 Details.capabilitiesToString(mTelecomCall.getDetails().getCallCapabilities()),
@@ -971,10 +1068,38 @@ public class Call {
                 this.mTelecomCall.getConferenceableCalls(),
                 VideoProfile.videoStateToString(mTelecomCall.getDetails().getVideoState()),
                 mSessionModificationState,
-                getVideoSettings());
+                getVideoSettings(), mIsActiveSub);
     }
 
     public String toSimpleString() {
         return super.toString();
+    }
+
+    public boolean isIncomingConfCall() {
+        int callState = getState();
+        if (callState == State.INCOMING || callState == State.CALL_WAITING) {
+            Bundle extras = getExtras();
+            boolean incomingConf = (extras == null)? false :
+                    extras.getBoolean(QtiImsExtUtils.QTI_IMS_INCOMING_CONF_EXTRA_KEY, false);
+            Log.d(this, "isIncomingConfCall = " + incomingConf);
+            return incomingConf;
+        }
+        return false;
+    }
+
+    public int getWifiQuality() {
+        Bundle extras = getExtras();
+        return (extras == null)? QtiCallConstants.VOWIFI_QUALITY_NONE :
+                extras.getInt(QtiCallConstants.VOWIFI_CALL_QUALITY_EXTRA_KEY,
+                QtiCallConstants.VOWIFI_QUALITY_NONE);
+    }
+
+    public void triggerCalcBaseChronometerTime() {
+        mBaseChronometerTime = getConnectTimeMillis() - System.currentTimeMillis()
+                + SystemClock.elapsedRealtime();
+    }
+
+    public long getCallDuration() {
+        return SystemClock.elapsedRealtime() - mBaseChronometerTime;
     }
 }

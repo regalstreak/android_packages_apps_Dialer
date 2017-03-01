@@ -20,25 +20,38 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
+import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.AnimationDrawable;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.PorterDuff;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.os.Trace;
 import android.support.v4.graphics.drawable.RoundedBitmapDrawable;
 import android.support.v4.graphics.drawable.RoundedBitmapDrawableFactory;
+import android.content.ContentResolver;
+import android.media.AudioManager;
+import android.provider.Settings;
 import android.telecom.DisconnectCause;
 import android.telephony.PhoneNumberUtils;
+import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
 import android.text.format.DateUtils;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.View.OnClickListener;
 import android.view.View.OnLayoutChangeListener;
 import android.view.ViewGroup;
 import android.view.ViewPropertyAnimator;
@@ -57,6 +70,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.android.contacts.common.compat.PhoneNumberUtilsCompat;
+import android.telecom.CallAudioState;
+
 import com.android.contacts.common.util.MaterialColorMapUtils.MaterialPalette;
 import com.android.contacts.common.widget.FloatingActionButtonController;
 import com.android.dialer.R;
@@ -112,6 +127,11 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
      */
     private static final long ACCESSIBILITY_ANNOUNCEMENT_DELAY_MS = 500;
 
+    private static final String RECORD_STATE_CHANGED =
+            "com.qualcomm.qti.phonefeature.RECORD_STATE_CHANGED";
+
+    private static final int MESSAGE_TIMER = 1;
+
     private AnimatorSet mAnimatorSet;
     private int mShrinkAnimationDuration;
     private int mFabNormalDiameter;
@@ -143,6 +163,8 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
     private ViewGroup mPrimaryCallInfo;
     private View mCallButtonsContainer;
     private ImageView mPhotoSmall;
+    private ImageButton mVbButton;
+    private AudioManager mAudioManager;
 
     // Secondary caller info
     private View mSecondaryCallInfo;
@@ -166,6 +188,10 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
     // Dark number info bar
     private TextView mInCallMessageLabel;
 
+    private InCallActivity mInCallActivity;
+    private TextView mRecordingTimeLabel;
+    private TextView mRecordingIcon;
+
     private FloatingActionButtonController mFloatingActionButtonController;
     private View mFloatingActionButtonContainer;
     private ImageButton mFloatingActionButton;
@@ -187,10 +213,60 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
     private boolean mCallStateLabelResetPending = false;
     private Handler mHandler;
 
+    private BroadcastReceiver recorderStateReceiver = new BroadcastReceiver() {
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!RECORD_STATE_CHANGED.equals(intent.getAction())) {
+                return;
+            }
+
+            if (mInCallActivity.isCallRecording()) {
+                recorderHandler.sendEmptyMessage(MESSAGE_TIMER);
+            } else {
+                mRecordingTimeLabel.setVisibility(View.GONE);
+                mRecordingIcon.setVisibility(View.GONE);
+            }
+        }
+    };
+
+    private Handler recorderHandler = new Handler() {
+
+        @Override
+        public void handleMessage(Message msg) {
+
+            switch (msg.what) {
+                case MESSAGE_TIMER:
+                    if (!mInCallActivity.isCallRecording()) {
+                        break;
+                    }
+
+                    String recordingTime = mInCallActivity.getCallRecordingTime();
+
+                    if (!TextUtils.isEmpty(recordingTime)) {
+                        mRecordingTimeLabel.setVisibility(View.VISIBLE);
+                        showCallRecordingElapsedTime(recordingTime);
+                        mRecordingIcon.setVisibility(View.VISIBLE);
+                    }
+
+                    if (!recorderHandler.hasMessages(MESSAGE_TIMER)) {
+                        sendEmptyMessageDelayed(MESSAGE_TIMER, 1000);
+                    }
+
+                    break;
+            }
+        }
+    };
+
     /**
      * Determines if secondary call info is populated in the secondary call info UI.
      */
     private boolean mHasSecondaryCallInfo = false;
+
+    private static final int TTY_MODE_OFF = 0;
+    private static final int TTY_MODE_HCO = 2;
+
+    private static final String VOLUME_BOOST = "volume_boost";
 
     @Override
     public CallCardPresenter.CallCardUi getUi() {
@@ -219,6 +295,21 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
         if (savedInstanceState != null) {
             mIsDialpadShowing = savedInstanceState.getBoolean(IS_DIALPAD_SHOWING_KEY, false);
         }
+        mAudioManager = (AudioManager) getActivity().getSystemService(Context.AUDIO_SERVICE);
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(RECORD_STATE_CHANGED);
+        getActivity().registerReceiver(recorderStateReceiver, filter);
+
+        mInCallActivity = (InCallActivity) getActivity();
+        if (mInCallActivity.isCallRecording()) {
+            recorderHandler.sendEmptyMessage(MESSAGE_TIMER);
+        }
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        getActivity().unregisterReceiver(recorderStateReceiver);
     }
 
     @Override
@@ -334,6 +425,21 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
         mPrimaryName.setElegantTextHeight(false);
         mCallStateLabel.setElegantTextHeight(false);
         mCallSubject = (TextView) view.findViewById(R.id.callSubject);
+
+        mVbButton = (ImageButton) view.findViewById(R.id.volumeBoost);
+        if (null != mVbButton) {
+            mVbButton.setOnClickListener(mVbListener);
+        }
+        mRecordingTimeLabel = (TextView) view.findViewById(R.id.recordingTime);
+        mRecordingIcon = (TextView) view.findViewById(R.id.recordingIcon);
+    }
+
+    private void showCallRecordingElapsedTime(String time) {
+        if (mRecordingTimeLabel.getVisibility() != View.VISIBLE) {
+            AnimUtils.fadeIn(mRecordingTimeLabel, AnimUtils.DEFAULT_DURATION);
+        }
+
+        mRecordingTimeLabel.setText(time);
     }
 
     @Override
@@ -399,6 +505,8 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
         // Determine how much space there is below or to the side of the call card.
         final float spaceBesideCallCard = getSpaceBesideCallCard();
 
+        doActionOnPredraw(visible, isLayoutRtl, videoView, spaceBesideCallCard);
+
         // We need to translate the video surface, but we need to know its position after the layout
         // has occurred so use a {@code ViewTreeObserver}.
         final ViewTreeObserver observer = getView().getViewTreeObserver();
@@ -408,67 +516,71 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
                 // We don't want to continue getting called.
                 getView().getViewTreeObserver().removeOnPreDrawListener(this);
 
-                float videoViewTranslation = 0f;
-
-                // Translate the call card to its pre-animation state.
-                if (!mIsLandscape) {
-                    mPrimaryCallCardContainer.setTranslationY(visible ?
-                            -mPrimaryCallCardContainer.getHeight() : 0);
-
-                    ViewGroup.LayoutParams p = videoView.getLayoutParams();
-                    videoViewTranslation = p.height / 2 - spaceBesideCallCard / 2;
-                }
-
-                // Perform animation of video view.
-                ViewPropertyAnimator videoViewAnimator = videoView.animate()
-                        .setInterpolator(AnimUtils.EASE_OUT_EASE_IN)
-                        .setDuration(mVideoAnimationDuration);
-                if (mIsLandscape) {
-                    videoViewAnimator
-                            .translationX(visible ? videoViewTranslation : 0);
-                } else {
-                    videoViewAnimator
-                            .translationY(visible ? videoViewTranslation : 0);
-                }
-                videoViewAnimator.start();
-
-                // Animate the call card sliding.
-                ViewPropertyAnimator callCardAnimator = mPrimaryCallCardContainer.animate()
-                        .setInterpolator(AnimUtils.EASE_OUT_EASE_IN)
-                        .setDuration(mVideoAnimationDuration)
-                        .setListener(new AnimatorListenerAdapter() {
-                            @Override
-                            public void onAnimationEnd(Animator animation) {
-                                super.onAnimationEnd(animation);
-                                if (!visible) {
-                                    mPrimaryCallCardContainer.setVisibility(View.GONE);
-                                }
-                            }
-
-                            @Override
-                            public void onAnimationStart(Animator animation) {
-                                super.onAnimationStart(animation);
-                                if (visible) {
-                                    mPrimaryCallCardContainer.setVisibility(View.VISIBLE);
-                                }
-                            }
-                        });
-
-                if (mIsLandscape) {
-                    float translationX = mPrimaryCallCardContainer.getWidth();
-                    translationX *= isLayoutRtl ? 1 : -1;
-                    callCardAnimator
-                            .translationX(visible ? 0 : translationX)
-                            .start();
-                } else {
-                    callCardAnimator
-                            .translationY(visible ? 0 : -mPrimaryCallCardContainer.getHeight())
-                            .start();
-                }
-
+                doActionOnPredraw(visible, isLayoutRtl, videoView, spaceBesideCallCard);
                 return true;
             }
         });
+    }
+
+    private void doActionOnPredraw(final boolean visible, final boolean isLayoutRtl,
+         final View videoView, final float spaceBesideCallCard) {
+        float videoViewTranslation = 0f;
+
+        // Translate the call card to its pre-animation state.
+        if (!mIsLandscape) {
+            mPrimaryCallCardContainer.setTranslationY(visible ?
+                    -mPrimaryCallCardContainer.getHeight() : 0);
+
+            ViewGroup.LayoutParams p = videoView.getLayoutParams();
+            videoViewTranslation = p.height / 2 - spaceBesideCallCard / 2;
+        }
+
+        // Perform animation of video view.
+        ViewPropertyAnimator videoViewAnimator = videoView.animate()
+                .setInterpolator(AnimUtils.EASE_OUT_EASE_IN)
+                .setDuration(mVideoAnimationDuration);
+        if (mIsLandscape) {
+            videoViewAnimator
+                    .translationX(visible ? videoViewTranslation : 0);
+        } else {
+            videoViewAnimator
+                    .translationY(visible ? videoViewTranslation : 0);
+        }
+        videoViewAnimator.start();
+
+        // Animate the call card sliding.
+        ViewPropertyAnimator callCardAnimator = mPrimaryCallCardContainer.animate()
+                .setInterpolator(AnimUtils.EASE_OUT_EASE_IN)
+                .setDuration(mVideoAnimationDuration)
+                .setListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        super.onAnimationEnd(animation);
+                        if (!visible) {
+                            mPrimaryCallCardContainer.setVisibility(View.GONE);
+                        }
+                    }
+
+                    @Override
+                    public void onAnimationStart(Animator animation) {
+                        super.onAnimationStart(animation);
+                        if (visible) {
+                            mPrimaryCallCardContainer.setVisibility(View.VISIBLE);
+                        }
+                    }
+                });
+
+        if (mIsLandscape) {
+            float translationX = mPrimaryCallCardContainer.getWidth();
+            translationX *= isLayoutRtl ? 1 : -1;
+            callCardAnimator
+                    .translationX(visible ? 0 : translationX)
+                    .start();
+        } else {
+            callCardAnimator
+                    .translationY(visible ? 0 : -mPrimaryCallCardContainer.getHeight())
+                    .start();
+        }
     }
 
     /**
@@ -638,11 +750,17 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
     public void setSecondaryInfoVisible(final boolean visible) {
         boolean wasVisible = mSecondaryCallInfo.isShown();
         final boolean isVisible = visible && mHasSecondaryCallInfo;
+        // If hide request is coming when InCallUI is in background, force the view to hide.
+        final boolean needForceHide = !isVisible &&
+                mSecondaryCallInfo.getVisibility() == View.VISIBLE &&
+                (!InCallPresenter.getInstance().isShowingInCallUi() ||
+                InCallPresenter.getInstance().isShowingManageConferenceUi());
         Log.v(this, "setSecondaryInfoVisible: wasVisible = " + wasVisible + " isVisible = "
-                + isVisible);
+                 + isVisible + " isFg = " + InCallPresenter.getInstance().isShowingInCallUi()
+                 + " view visibility = " + mSecondaryCallInfo.getVisibility());
 
         // If visibility didn't change, nothing to do.
-        if (wasVisible == isVisible) {
+        if (wasVisible == isVisible && !needForceHide) {
             return;
         }
 
@@ -728,6 +846,8 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
                 sessionModificationState, disconnectCause, connectionLabel, isGatewayCall, isWifi,
                 isConference, isWorkCall);
 
+        updateVbByCall(state);
+
         Log.v(this, "setCallState " + callStateLabel.getCallStateLabel());
         Log.v(this, "AutoDismiss " + callStateLabel.isAutoDismissing());
         Log.v(this, "DisconnectCause " + disconnectCause.toString());
@@ -742,9 +862,9 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
         // Check if the call subject is showing -- if it is, we want to bypass showing the call
         // state.
         boolean isSubjectShowing = mCallSubject.getVisibility() == View.VISIBLE;
-
+        boolean isSubChanged = (callStateIcon !=  mCallStateIcon.getDrawable());
         if (TextUtils.equals(callStateLabel.getCallStateLabel(), mCallStateLabel.getText()) &&
-                !isSubjectShowing) {
+                !isSubjectShowing && !isSubChanged) {
             // Nothing to do if the labels are the same
             if (state == Call.State.ACTIVE || state == Call.State.CONFERENCED) {
                 mCallStateLabel.clearAnimation();
@@ -778,6 +898,18 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
             mCallStateIcon.setAlpha(1.0f);
             mCallStateIcon.setImageDrawable(callStateIcon);
 
+            MaterialPalette themeColors = InCallPresenter.getInstance().getThemeColors();
+            if (themeColors != null) {
+                // Change the alpha value in the 32 bit color of sim card, because the color of
+                // call background changed with the color of sim card.
+                // Set the tint mode to SCREEN to avoid the slot number in the sim icon to be
+                // covered.
+                int stateIconColor = (themeColors.mPrimaryColor & 0x00ffffff) | 0x7f000000;
+                mCallStateIcon.setImageTintMode(PorterDuff.Mode.SCREEN);
+                mCallStateIcon.setImageTintList(ColorStateList.valueOf(stateIconColor));
+                Log.d(this, "Set tint of call state icon to " + stateIconColor);
+            }
+
             if (state == Call.State.ACTIVE || state == Call.State.CONFERENCED
                     || TextUtils.isEmpty(callStateLabel.getCallStateLabel())) {
                 mCallStateIcon.clearAnimation();
@@ -788,6 +920,9 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
             if (callStateIcon instanceof AnimationDrawable) {
                 ((AnimationDrawable) callStateIcon).start();
             }
+            if (isSubChanged) {
+                updateColors();
+            }
         } else {
             mCallStateIcon.clearAnimation();
 
@@ -796,6 +931,7 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
             mCallStateIcon.setAlpha(0.0f);
             mCallStateIcon.setVisibility(View.GONE);
         }
+        mCallStateIcon.requestLayout();
 
         if (VideoUtils.isVideoCall(videoState)
                 || (state == Call.State.ACTIVE && sessionModificationState
@@ -1033,9 +1169,7 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
             case Call.State.ACTIVE:
                 // We normally don't show a "call state label" at all in this state
                 // (but we can use the call state label to display the provider name).
-                if ((isAccount || isWifi || isConference) && hasSuggestedLabel) {
-                    callStateLabel = label;
-                } else if (sessionModificationState
+                if (sessionModificationState
                         == Call.SessionModificationState.REQUEST_REJECTED) {
                     callStateLabel = context.getString(R.string.card_title_video_call_rejected);
                     isAutoDismissing = true;
@@ -1051,6 +1185,11 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
                     callStateLabel = context.getString(R.string.card_title_video_call_requesting);
                 } else if (VideoUtils.isVideoCall(videoState)) {
                     callStateLabel = context.getString(R.string.card_title_video_call);
+                }
+
+                if ((isAccount || isWifi || isConference) && hasSuggestedLabel) {
+                   label += (callStateLabel != null) ? (" " + callStateLabel) : "";
+                   callStateLabel = label;
                 }
                 break;
             case Call.State.ONHOLD:
@@ -1069,7 +1208,17 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
                 break;
             case Call.State.INCOMING:
             case Call.State.CALL_WAITING:
-                if (isWifi && hasSuggestedLabel) {
+                if (isConference) {
+                    if (isAccount) {
+                        callStateLabel = context.getString(
+                                R.string.incoming_conf_via_template, label);
+                    } else if (VideoUtils.isVideoCall(videoState)) {
+                        callStateLabel = context.getString(
+                                R.string.card_title_incoming_video_conf_call);
+                    } else {
+                        callStateLabel = context.getString(R.string.card_title_incoming_conf_call);
+                    }
+                } else if (isWifi && hasSuggestedLabel) {
                     callStateLabel = label;
                 } else if (isAccount) {
                     callStateLabel = context.getString(R.string.incoming_via_template, label);
@@ -1094,6 +1243,13 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
                 callStateLabel = disconnectCause.getLabel();
                 if (TextUtils.isEmpty(callStateLabel)) {
                     callStateLabel = context.getString(R.string.card_title_call_ended);
+                }
+                if (context.getResources().getBoolean(R.bool.def_incallui_clearcode_enabled)) {
+                    String clearText = disconnectCause.getDescription() == null ? ""
+                            : disconnectCause.getDescription().toString();
+                    if (!TextUtils.isEmpty(clearText)) {
+                        Toast.makeText(context, clearText, Toast.LENGTH_SHORT).show();
+                    }
                 }
                 break;
             case Call.State.CONFERENCED:
@@ -1203,6 +1359,11 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
      */
     @Override
     public void showHdAudioIndicator(boolean visible) {
+        int subId = CallList.getInstance().getActiveSubId();
+        if (SubscriptionManager.getResourcesForSubId(getContext(), subId)
+                .getBoolean(R.bool.config_show_hd2)) {
+            mHdAudioIcon.setImageResource(R.drawable.ic_hd2_24dp);
+        }
         mHdAudioIcon.setVisibility(visible ? View.VISIBLE : View.GONE);
     }
 
@@ -1331,6 +1492,7 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
                 animator.addListener(new AnimatorListenerAdapter() {
                     @Override
                     public void onAnimationEnd(Animator animation) {
+                        updateFabPosition();
                         mPrimaryCallCardContainer.setTag(R.id.view_tag_callcard_actual_height,
                                 null);
                         setViewStatePostAnimation(listener);
@@ -1489,4 +1651,105 @@ public class CallCardFragment extends BaseFragment<CallCardPresenter, CallCardPr
             v.setBottom(oldBottom);
         }
     }
+
+    private OnClickListener mVbListener = new OnClickListener() {
+        @Override
+        public void onClick(View arg0) {
+            if (isVbAvailable()) {
+                // Switch Volume Boost status
+                setVolumeBoost(!isVolumeBoostOn());
+            }
+
+            updateVbButton();
+            showVbNotify();
+        }
+    };
+
+    private boolean isVbAvailable() {
+        int mode = AudioModeProvider.getInstance().getAudioMode();
+        final Context context = getContext();
+        int settingsTtyMode = Settings.Secure.getInt(context.getContentResolver(),
+                Settings.Secure.PREFERRED_TTY_MODE,
+                TTY_MODE_OFF);
+
+        return (mode == CallAudioState.ROUTE_EARPIECE || mode == CallAudioState.ROUTE_SPEAKER
+                || settingsTtyMode == TTY_MODE_HCO);
+    }
+
+    private void updateVbButton() {
+        if (isVbAvailable()) {
+           if (isVolumeBoostOn()) {
+               mVbButton.setBackgroundResource(R.drawable.vb_active);
+           } else {
+               mVbButton.setBackgroundResource(R.drawable.vb_normal);
+           }
+        } else {
+            mVbButton.setBackgroundResource(R.drawable.vb_disable);
+        }
+    }
+
+    @Override
+    public void showVbButton(boolean show) {
+        mVbButton.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    private void showVbNotify() {
+        Toast vbnotify;
+        int resId = R.string.volume_boost_notify_unavailable;
+
+        if (isVbAvailable()) {
+            if (isVolumeBoostOn()) {
+                resId = R.string.volume_boost_notify_enabled;
+            } else {
+                resId = R.string.volume_boost_notify_disabled;
+            }
+        }
+
+        vbnotify = Toast.makeText(getView().getContext(), resId, Toast.LENGTH_SHORT);
+        vbnotify.setGravity(Gravity.CENTER, 0, 0);
+        vbnotify.show();
+    }
+
+    private void updateVbByCall(int state) {
+        updateVbButton();
+
+        if (Call.State.ACTIVE == state) {
+            mVbButton.setVisibility(View.VISIBLE);
+        } else if (Call.State.DISCONNECTED == state) {
+            if (!CallList.getInstance().hasLiveCall()
+                    && isVolumeBoostOn()) {
+                mVbButton.setVisibility(View.GONE);
+
+                setVolumeBoost(false);
+            }
+        }
+    }
+
+    public void updateVbByAudioMode(int newMode) {
+        if (!(newMode == CallAudioState.ROUTE_EARPIECE
+                || newMode == CallAudioState.ROUTE_BLUETOOTH
+                || newMode == CallAudioState.ROUTE_WIRED_HEADSET
+                || newMode == CallAudioState.ROUTE_SPEAKER)) {
+            return;
+        }
+
+        if (mAudioManager != null && isVolumeBoostOn()) {
+            setVolumeBoost(false);
+        }
+
+        updateVbButton();
+    }
+
+    private void setVolumeBoost(boolean on){
+        if (on)
+            mAudioManager.setParameters(VOLUME_BOOST + "=on");
+        else
+            mAudioManager.setParameters(VOLUME_BOOST + "=off");
+    }
+
+    private boolean isVolumeBoostOn(){
+
+        return mAudioManager.getParameters(VOLUME_BOOST).contains("=on");
+    }
+
 }

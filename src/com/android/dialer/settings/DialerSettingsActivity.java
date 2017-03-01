@@ -30,6 +30,8 @@ import android.widget.Toast;
 
 import com.android.contacts.common.compat.CompatUtils;
 import com.android.contacts.common.compat.TelephonyManagerCompat;
+import com.android.dialer.SpeedDialListActivity;
+import com.android.contacts.common.CallUtil;
 import com.android.dialer.R;
 import com.android.dialer.compat.FilteredNumberCompat;
 import com.android.dialer.compat.SettingsCompat;
@@ -37,10 +39,12 @@ import com.android.dialer.compat.UserManagerCompat;
 
 import java.util.List;
 
+import org.codeaurora.ims.utils.QtiImsExtUtils;
+
 public class DialerSettingsActivity extends AppCompatPreferenceActivity {
     protected SharedPreferences mPreferences;
     private boolean migrationStatusOnBuildHeaders;
-
+    private final String ACTION_LAUNCH_CALL_SETTINGS = "org.codeaurora.CALL_SETTINGS";
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -83,6 +87,16 @@ public class DialerSettingsActivity extends AppCompatPreferenceActivity {
             target.add(quickResponseSettingsHeader);
         }
 
+        if (!QtiImsExtUtils.isCarrierOneSupported()) {
+            Header speedDialSettingsHeader = new Header();
+            Intent speedDialSettingsIntent = new Intent(this, SpeedDialListActivity.class);
+            speedDialSettingsIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+            speedDialSettingsHeader.titleRes = R.string.speed_dial_settings;
+            speedDialSettingsHeader.intent = speedDialSettingsIntent;
+            target.add(speedDialSettingsHeader);
+        }
+
         TelephonyManager telephonyManager =
                 (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
 
@@ -91,25 +105,38 @@ public class DialerSettingsActivity extends AppCompatPreferenceActivity {
         // primary user and there are multiple SIMs. In N+, "Calling accounts" is shown whenever
         // "Call Settings" is not shown.
         boolean isPrimaryUser = isPrimaryUser();
-        if (isPrimaryUser
-                && TelephonyManagerCompat.getPhoneCount(telephonyManager) <= 1) {
-            Header callSettingsHeader = new Header();
-            Intent callSettingsIntent = new Intent(TelecomManager.ACTION_SHOW_CALL_SETTINGS);
-            callSettingsIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
 
-            callSettingsHeader.titleRes = R.string.call_settings_label;
-            callSettingsHeader.intent = callSettingsIntent;
-            target.add(callSettingsHeader);
-        } else if (BuildCompat.isAtLeastN() || isPrimaryUser) {
-            Header phoneAccountSettingsHeader = new Header();
-            Intent phoneAccountSettingsIntent =
-                    new Intent(TelecomManager.ACTION_CHANGE_PHONE_ACCOUNTS);
-            phoneAccountSettingsIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        if (QtiImsExtUtils.isCarrierOneSupported()) {
+            if (isPrimaryUser) {
+                Header callSettingsHeader =  new Header();
+                Intent callSettingsIntent = new Intent(ACTION_LAUNCH_CALL_SETTINGS);
+                callSettingsIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
 
-            phoneAccountSettingsHeader.titleRes = R.string.phone_account_settings_label;
-            phoneAccountSettingsHeader.intent = phoneAccountSettingsIntent;
-            target.add(phoneAccountSettingsHeader);
-        }
+                callSettingsHeader.titleRes = R.string.call_settings_lbl;
+                callSettingsHeader.intent = callSettingsIntent;
+                target.add(callSettingsHeader);
+           }
+        } else {
+            if (isPrimaryUser
+                    && TelephonyManagerCompat.getPhoneCount(telephonyManager) <= 1) {
+                Header callSettingsHeader = new Header();
+                Intent callSettingsIntent = new Intent(TelecomManager.ACTION_SHOW_CALL_SETTINGS);
+                callSettingsIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+                callSettingsHeader.titleRes = R.string.call_settings_label;
+                callSettingsHeader.intent = callSettingsIntent;
+                target.add(callSettingsHeader);
+            } else if (BuildCompat.isAtLeastN() || isPrimaryUser) {
+                Header phoneAccountSettingsHeader = new Header();
+                Intent phoneAccountSettingsIntent =
+                        new Intent(TelecomManager.ACTION_CHANGE_PHONE_ACCOUNTS);
+                phoneAccountSettingsIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+                phoneAccountSettingsHeader.titleRes = R.string.phone_account_settings_label;
+                phoneAccountSettingsHeader.intent = phoneAccountSettingsIntent;
+                target.add(phoneAccountSettingsHeader);
+            }
+       }
         if (FilteredNumberCompat.canCurrentUserOpenBlockSettings(this)) {
             Header blockedCallsHeader = new Header();
             blockedCallsHeader.titleRes = R.string.manage_blocked_numbers_label;
@@ -126,6 +153,27 @@ public class DialerSettingsActivity extends AppCompatPreferenceActivity {
             accessibilitySettingsHeader.titleRes = R.string.accessibility_settings_title;
             accessibilitySettingsHeader.intent = accessibilitySettingsIntent;
             target.add(accessibilitySettingsHeader);
+        }
+        //video calling
+        boolean enablePresence = this.getResources().getBoolean(
+                R.bool.config_regional_presence_enable);
+        if(enablePresence){
+            Header videocallingHeader = new Header();
+            videocallingHeader.titleRes = R.string.video_call;
+            videocallingHeader.fragment = VideoCallingSettingsFragment.class.getName();
+            target.add(videocallingHeader);
+        }
+
+        boolean usageEnable = getResources().getBoolean(
+                R.bool.config_regional_call_data_usage_enable);
+        if (usageEnable) {
+            final Header historyInfoHeader = new Header();
+            historyInfoHeader.titleRes = R.string.call_data_info_label;
+            historyInfoHeader.summaryRes = R.string.call_data_info_description;
+            historyInfoHeader.intent = new Intent(Intent.ACTION_MAIN);
+            historyInfoHeader.intent
+                    .setAction("android.intent.action.SHOW_TIMERINFO");
+            target.add(historyInfoHeader);
         }
     }
 

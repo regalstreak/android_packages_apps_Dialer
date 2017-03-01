@@ -17,6 +17,8 @@
 package com.android.incallui;
 
 import android.app.ActionBar;
+import android.app.FragmentTransaction;
+import android.app.ActionBar.Tab;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.AlertDialog;
@@ -30,12 +32,17 @@ import android.content.DialogInterface.OnCancelListener;
 import android.content.DialogInterface.OnClickListener;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.content.res.TypedArray;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.Point;
 import android.hardware.SensorManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Trace;
+import android.os.UserHandle;
 import android.telecom.DisconnectCause;
 import android.telecom.PhoneAccountHandle;
+import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
 import android.view.KeyEvent;
 import android.view.MenuItem;
@@ -49,6 +56,8 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
+import android.widget.ImageView;
+import android.widget.TextView;
 
 import com.android.contacts.common.activity.TransactionSafeActivity;
 import com.android.contacts.common.compat.CompatUtils;
@@ -103,6 +112,16 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
 
     private AlertDialog mDialog;
     private InCallOrientationEventListener mInCallOrientationEventListener;
+    // Add phone feature uri
+    private static final Uri URI_PHONE_FEATURE = Uri
+            .parse("content://com.qualcomm.qti.phonefeature.FEATURE_PROVIDER");
+
+    private static final String METHOD_START_CALL_RECORD = "start_call_record";
+    private static final String METHOD_STOP_CALL_RECORD = "stop_call_record";
+    private static final String METHOD_IS_CALL_RECORD_RUNNING = "is_call_record_running";
+    private static final String METHOD_IS_CALL_RECORD_AVAILABLE = "is_call_record_available";
+    private static final String METHOD_GET_CALL_RECORD_DURATION = "get_call_record_duration";
+    private static final String EXTRA_RESULT = "result";
 
     /**
      * Used to indicate whether the dialpad should be hidden or shown {@link #onResume}.
@@ -133,6 +152,13 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
     private Animation mSlideIn;
     private Animation mSlideOut;
     private boolean mDismissKeyguard = false;
+
+    private final int TAB_COUNT_ONE = 1;
+    private final int TAB_COUNT_TWO = 2;
+    private final int TAB_POSITION_FIRST = 0;
+
+    private Tab[] mDsdaTab = new Tab[TAB_COUNT_TWO];
+    private boolean[] mDsdaTabAdd = {false, false};
 
     AnimationListenerAdapter mSlideOutListener = new AnimationListenerAdapter() {
         @Override
@@ -170,18 +196,27 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
                 | WindowManager.LayoutParams.FLAG_IGNORE_CHEEK_PRESSES;
 
         getWindow().addFlags(flags);
-
-        // Setup action bar for the conference call manager.
-        requestWindowFeature(Window.FEATURE_ACTION_BAR_OVERLAY);
-        ActionBar actionBar = getActionBar();
-        if (actionBar != null) {
-            actionBar.setDisplayHomeAsUpEnabled(true);
-            actionBar.setDisplayShowTitleEnabled(true);
-            actionBar.hide();
+        boolean isDsdaEnabled = CallList.getInstance().isDsdaEnabled();
+        if (isDsdaEnabled) {
+            requestWindowFeature(Window.FEATURE_ACTION_BAR);
+            getActionBar().setNavigationMode(ActionBar.NAVIGATION_MODE_TABS);
+            getActionBar().setDisplayShowTitleEnabled(false);
+            getActionBar().setDisplayShowHomeEnabled(false);
+        } else {
+            requestWindowFeature(Window.FEATURE_ACTION_BAR_OVERLAY);
+            if (getActionBar() != null) {
+                getActionBar().setDisplayHomeAsUpEnabled(true);
+                getActionBar().setDisplayShowTitleEnabled(true);
+                getActionBar().hide();
+            }
         }
 
         // TODO(klp): Do we need to add this back when prox sensor is not available?
         // lp.inputFeatures |= WindowManager.LayoutParams.INPUT_FEATURE_DISABLE_USER_ACTIVITY;
+
+        // Since activity is created newly, clear full screen flag. This will ensure that
+        // the flag is in sync with actual UI when UI is recreated due to orientation change.
+        InCallPresenter.getInstance().clearFullscreen();
 
         setContentView(R.layout.incall_screen);
 
@@ -236,7 +271,10 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
         }
         mInCallOrientationEventListener = new InCallOrientationEventListener(this);
 
-        Log.d(this, "onCreate(): exit");
+        if (isDsdaEnabled ) {
+            initializeDsdaSwitchTab();
+        }
+        Log.d(this, "onCreate(): exit" + isDsdaEnabled);
     }
 
     @Override
@@ -271,8 +309,8 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
         InCallPresenter.getInstance().setThemeColors();
         InCallPresenter.getInstance().onUiShowing(true);
 
-        // Clear fullscreen state onResume; the stored value may not match reality.
-        InCallPresenter.getInstance().clearFullscreen();
+        // Exit fullscreen state onResume; the stored value may not match reality.
+        InCallPresenter.getInstance().setFullScreen(false);
 
         // If there is a pending request to show or hide the dialpad, handle that now.
         if (mShowDialpadRequest != DIALPAD_REQUEST_NONE) {
@@ -301,6 +339,14 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
         if (mShowPostCharWaitDialogOnResume) {
             showPostCharWaitDialog(mShowPostCharWaitDialogCallId, mShowPostCharWaitDialogChars);
         }
+        InCallPresenter.getInstance().updatePrimaryCallState();
+    }
+
+    @Override
+    public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode);
+        Log.i(this, "recreate()...");
+        recreate();
     }
 
     // onPause is guaranteed to be called when the InCallActivity goes
@@ -331,6 +377,7 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
     @Override
     protected void onDestroy() {
         Log.d(this, "onDestroy()...  this = " + this);
+        InCallLowBatteryListener.getInstance().onDestroyInCallActivity();
         InCallPresenter.getInstance().unsetActivity(this);
         InCallPresenter.getInstance().updateIsChangingConfigurations();
         super.onDestroy();
@@ -387,8 +434,13 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
         return isSafeToCommitTransactions();
     }
 
+    /* package */ boolean isManageConferenceVisible() {
+        return (mConferenceManagerFragment != null && mConferenceManagerFragment.isVisible());
+    }
+
     private boolean hasPendingDialogs() {
-        return mDialog != null || (mAnswerFragment != null && mAnswerFragment.hasPendingDialogs());
+        return mDialog != null || (mAnswerFragment != null && mAnswerFragment.hasPendingDialogs())
+                || InCallCsRedialHandler.getInstance().hasPendingDialogs();
     }
 
     @Override
@@ -885,9 +937,16 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
             mDialog.dismiss();
             mDialog = null;
         }
+        SelectPhoneAccountDialogFragment dialogFragment = (SelectPhoneAccountDialogFragment)
+                getFragmentManager().findFragmentByTag(TAG_SELECT_ACCT_FRAGMENT);
+        if (dialogFragment != null) {
+            dialogFragment.dismiss();
+        }
         if (mAnswerFragment != null) {
             mAnswerFragment.dismissPendingDialogs();
         }
+        InCallCsRedialHandler.getInstance().dismissPendingDialogs();
+        InCallLowBatteryListener.getInstance().dismissPendingDialogs();
     }
 
     /**
@@ -940,6 +999,113 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
         }
     }
 
+    private void initializeDsdaSwitchTab() {
+        int phoneCount = InCallServiceImpl.sPhoneCount;
+        ActionBar bar = getActionBar();
+        View[] mDsdaTabLayout = new View[phoneCount];
+        int[] subString = {R.string.sub_1, R.string.sub_2};
+
+        Log.d(TAG, "initializeDsdaSwitchTab" + phoneCount);
+        for (int i = 0; i < phoneCount; i++) {
+            mDsdaTabLayout[i] = getLayoutInflater()
+                    .inflate(R.layout.msim_tab_sub_info, null);
+
+            ((TextView)mDsdaTabLayout[i].findViewById(R.id.tabSubText))
+                    .setText(subString[i]);
+
+            mDsdaTab[i] = bar.newTab().setCustomView(mDsdaTabLayout[i])
+                    .setTabListener(new TabListener(i));
+        }
+    }
+
+    public void updateDsdaTab() {
+        int phoneCount = InCallServiceImpl.sPhoneCount;
+        ActionBar bar = getActionBar();
+
+        for (int i = 0; i < phoneCount; i++) {
+            int subId = QtiCallUtils.getSubId(i);
+            if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                    && CallList.getInstance().hasAnyLiveCall(subId)) {
+                if (!mDsdaTabAdd[i]) {
+                    addDsdaTab(i);
+                }
+            } else {
+                removeDsdaTab(i);
+            }
+        }
+
+        updateDsdaTabSelection();
+    }
+
+    private void addDsdaTab(int phoneId) {
+        ActionBar bar = getActionBar();
+        int tabCount = bar.getTabCount();
+
+        if (tabCount < phoneId) {
+            bar.addTab(mDsdaTab[phoneId], false);
+        } else {
+            bar.addTab(mDsdaTab[phoneId], phoneId, false);
+        }
+        mDsdaTabAdd[phoneId] = true;
+        Log.d(this, "addDsdaTab, phoneId = " + phoneId + " tab count = " + tabCount);
+    }
+
+    private void removeDsdaTab(int subId) {
+        ActionBar bar = getActionBar();
+        int tabCount = bar.getTabCount();
+
+        for (int i = 0; i < tabCount; i++) {
+            if (bar.getTabAt(i).equals(mDsdaTab[subId])) {
+                bar.removeTab(mDsdaTab[subId]);
+                mDsdaTabAdd[subId] = false;
+                return;
+            }
+        }
+        Log.d(this, "removeDsdaTab, subId = " + subId + " tab count = " + tabCount);
+    }
+
+    private void updateDsdaTabSelection() {
+        ActionBar bar = getActionBar();
+        int barCount = bar.getTabCount();
+
+        if (barCount == TAB_COUNT_ONE) {
+            bar.selectTab(bar.getTabAt(TAB_POSITION_FIRST));
+        } else if (barCount == TAB_COUNT_TWO) {
+            int phoneId = QtiCallUtils.getPhoneId(CallList
+                    .getInstance().getActiveSubId());
+            bar.selectTab(bar.getTabAt(phoneId));
+        }
+    }
+
+    private class TabListener implements ActionBar.TabListener {
+        int mPhoneId;
+
+        public TabListener(int phoneId) {
+            mPhoneId = phoneId;
+        }
+
+        public void onTabSelected(Tab tab, FragmentTransaction ft) {
+            ActionBar bar = getActionBar();
+            int tabCount = bar.getTabCount();
+                Log.d(this, "onTabSelected mPhoneId:" + mPhoneId);
+            //Don't setActiveSubscription if tab count is 1.This is to avoid
+            //setting active subscription automatically when call on one sub
+            //ends and it's corresponding tab is removed.For such cases active
+            //subscription will be set by InCallPresenter.attemptFinishActivity.
+            int subId = QtiCallUtils.getSubId(mPhoneId);
+            if (tabCount != TAB_COUNT_ONE && CallList.getInstance().hasAnyLiveCall(subId)
+                    && (CallList.getInstance().getActiveSubId() != subId)) {
+                Log.d(this, "Switch to other active sub: " + subId);
+                QtiCallUtils.switchToActiveSub(subId);
+            }
+        }
+
+        public void onTabUnselected(Tab tab, FragmentTransaction ft) {
+        }
+
+        public void onTabReselected(Tab tab, FragmentTransaction ft) {
+        }
+    }
 
     public OnTouchListener getDispatchTouchEventListener() {
         return mDispatchTouchEventListener;
@@ -960,5 +1126,59 @@ public class InCallActivity extends TransactionSafeActivity implements FragmentD
         } else {
             mInCallOrientationEventListener.disable();
         }
+    }
+
+    public static boolean isPhoneFeatureEnabled(Context context) {
+        return (UserHandle.myUserId() == UserHandle.USER_OWNER &&
+                context.getContentResolver().acquireProvider(URI_PHONE_FEATURE) != null);
+    }
+
+    public static Bundle callBinder(Context context, String method) {
+        if (!isPhoneFeatureEnabled(context)) {
+            return null;
+        }
+        return context.getContentResolver().call(URI_PHONE_FEATURE, method, null, null);
+    }
+
+    public boolean isCallRecording() {
+        boolean isRecording = false;
+        Bundle result = callBinder(InCallActivity.this, METHOD_IS_CALL_RECORD_RUNNING);
+
+        if (result != null) {
+            isRecording = result.getBoolean(EXTRA_RESULT);
+        }
+
+        return isRecording;
+    }
+
+    public boolean isCallRecorderEnabled() {
+        boolean isCallRecorderEnabled = false;
+        Bundle result = callBinder(InCallActivity.this, METHOD_IS_CALL_RECORD_AVAILABLE);
+
+        if (result != null) {
+            isCallRecorderEnabled = result.getBoolean(EXTRA_RESULT);
+        }
+        return isCallRecorderEnabled;
+    }
+
+    public void startInCallRecorder() {
+        callBinder(InCallActivity.this, METHOD_START_CALL_RECORD);
+    }
+
+    public void stopInCallRecorder() {
+        callBinder(InCallActivity.this, METHOD_STOP_CALL_RECORD);
+    }
+
+    public String getCallRecordingTime() {
+        long time = 0;
+        Bundle result = callBinder(InCallActivity.this, METHOD_GET_CALL_RECORD_DURATION);
+
+        if (result != null) {
+            time = result.getLong(EXTRA_RESULT) / 1000;
+        }
+
+        String recordingTime = String.format("%02d:%02d", time / 60, time % 60);
+
+        return recordingTime;
     }
 }

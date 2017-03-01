@@ -17,14 +17,21 @@
 package com.android.dialer.util;
 
 import android.content.Intent;
+import android.content.res.Resources;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.ContactsContract;
 import android.telecom.PhoneAccountHandle;
 import android.telecom.TelecomManager;
 import android.telecom.VideoProfile;
+import android.content.Context;
+import com.android.dialer.R;
+import android.telephony.SubscriptionManager;
+import android.telephony.SubscriptionInfo;
+import android.telephony.TelephonyManager;
 
 import com.android.contacts.common.CallUtil;
+import java.util.List;
 
 /**
  * Utilities for creation of intents in Dialer, such as {@link Intent#ACTION_CALL}.
@@ -154,5 +161,52 @@ public class IntentUtil {
         if (phoneNumberType != NO_PHONE_TYPE) {
             intent.putExtra(ContactsContract.Intents.Insert.PHONE_TYPE, phoneNumberType);
         }
+    }
+    /**
+     * if true, conference dialer  is enabled.
+     */
+    public static boolean isConferDialerEnabled(Context context) {
+        boolean isEnabled = false;
+        List<SubscriptionInfo> subInfos = SubscriptionManager.from(context)
+                .getActiveSubscriptionInfoList();
+        if (subInfos != null) {
+            for (SubscriptionInfo subInfo : subInfos ) {
+                if (SubscriptionManager.isValidSubscriptionId(subInfo.getSubscriptionId())) {
+                    Resources subRes = SubscriptionManager.getResourcesForSubId(context,
+                            subInfo.getSubscriptionId());
+                    if (subRes.getBoolean(R.bool.config_enable_conference_dialer)) {
+                        TelephonyManager telephonyMgr = (TelephonyManager) context.
+                                getSystemService(Context.TELEPHONY_SERVICE);
+                        isEnabled = telephonyMgr.isImsRegisteredForSubscriber(subInfo
+                                .getSubscriptionId());
+                        if (isEnabled) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return isEnabled;
+    }
+
+    /**
+     * get intent to start conference dialer
+     * with this intent, we can originate an conference call
+     */
+    public static Intent getConferenceDialerIntent(String number) {
+        Intent intent = new Intent("android.intent.action.ADDPARTICIPANT");
+        intent.putExtra("confernece_number_key", number);
+        return intent;
+    }
+
+    /**
+     * used to get intent to start conference dialer
+     * with this intent, we can add participants to an existing conference call
+     */
+    public static Intent getAddParticipantsIntent(String number) {
+        Intent intent = new Intent("android.intent.action.ADDPARTICIPANT");
+        intent.putExtra("add_participant", true);
+        intent.putExtra("current_participant_list", number);
+        return intent;
     }
 }

@@ -17,12 +17,21 @@
 package com.android.incallui;
 
 import android.content.Context;
+import android.provider.Settings;
+import android.telecom.VideoProfile;
+import android.telephony.SubscriptionManager;
 
 import com.android.dialer.compat.UserManagerCompat;
 import com.android.dialer.util.TelecomUtil;
 import com.android.incallui.InCallPresenter.InCallState;
 
 import java.util.List;
+
+import org.codeaurora.ims.internal.IQtiImsExt;
+import org.codeaurora.ims.QtiImsException;
+import org.codeaurora.ims.QtiImsExtListenerBaseImpl;
+import org.codeaurora.ims.QtiImsExtManager;
+import org.codeaurora.ims.utils.QtiImsExtUtils;
 
 /**
  * Presenter for the Incoming call widget. The {@link AnswerPresenter} handles the logic during
@@ -36,51 +45,101 @@ import java.util.List;
 public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
         implements CallList.CallUpdateListener, InCallPresenter.InCallUiListener,
                 InCallPresenter.IncomingCallListener,
-                CallList.Listener {
+                CallList.Listener, CallList.ActiveSubChangeListener {
 
     private static final String TAG = AnswerPresenter.class.getSimpleName();
 
-    private String mCallId;
-    private Call mCall = null;
+    private String mCallId[] = new String[InCallServiceImpl.sPhoneCount];
+    private Call mCall[] = new Call[InCallServiceImpl.sPhoneCount];
+    private final CallList mCalls = CallList.getInstance();
     private boolean mHasTextMessages = false;
+    // Currently mVideoState is beeing used only for incoming calls.
+    // As there is only one incoming call allowed there is no need of array here.
+    private int mVideoState = VideoProfile.STATE_AUDIO_ONLY;
+
+    /* QtiImsExtListenerBaseImpl instance to handle call deflection response */
+    private QtiImsExtListenerBaseImpl imsInterfaceListener =
+            new QtiImsExtListenerBaseImpl() {
+
+        /* Handles call deflect response */
+        @Override
+        public void receiveCallDeflectResponse(int result) {
+            Log.w(this, "receiveCallDeflectResponse: " + result);
+        }
+    };
+    private static final int INVALID_PHONEID = -1;
 
     @Override
     public void onUiShowing(boolean showing) {
         if (showing) {
-            CallList.getInstance().addListener(this);
-            final CallList calls = CallList.getInstance();
+            mCalls.addListener(this);
+            mCalls.addActiveSubChangeListener(this);
             Call call;
-            call = calls.getIncomingCall();
-            if (call != null) {
-                processIncomingCall(call);
+            // Consider incoming/waiting calls on both subscriptions
+            // for DSDA.
+            for (int i = 0; i < InCallServiceImpl.sPhoneCount; i++) {
+                int subId = QtiCallUtils.getSubId(i);
+                if (checkSubId(i)) {
+                    call = mCalls.getCallWithState(Call.State.INCOMING, 0, subId);
+                    if (call == null) {
+                        call = mCalls.getCallWithState(Call.State.CALL_WAITING, 0, subId);
+                    }
+                    if (call != null) {
+                        processIncomingCall(call);
+                    }
+                } else {
+                    Log.d(TAG, "No valid sub");
+                }
             }
-            call = calls.getVideoUpgradeRequestCall();
+            call = mCalls.getVideoUpgradeRequestCall();
             Log.d(this, "getVideoUpgradeRequestCall call =" + call);
             if (call != null) {
                 showAnswerUi(true);
                 processVideoUpgradeRequestCall(call);
             }
         } else {
-            CallList.getInstance().removeListener(this);
+            mCalls.removeListener(this);
             // This is necessary because the activity can be destroyed while an incoming call exists.
             // This happens when back button is pressed while incoming call is still being shown.
-            if (mCallId != null) {
-                CallList.getInstance().removeCallUpdateListener(mCallId, this);
+            for (int i = 0; i < InCallServiceImpl.sPhoneCount; i++) {
+                int subId = QtiCallUtils.getSubId(i);
+                if (checkSubId(i)) {
+                    Call call = mCalls.getCallWithState(Call.State.INCOMING, 0, subId);
+                    if (call == null) {
+                        call = mCalls.getCallWithState(Call.State.CALL_WAITING, 0, subId);
+                    }
+                    if (call == null) {
+                        call = mCalls.getCallWithState(Call.State.ACTIVE, 0, subId);
+                    }
+                    if (mCallId[i] != null && call == null) {
+                        mCalls.removeCallUpdateListener(mCallId[i], this);
+                        mCalls.removeActiveSubChangeListener(this);
+                    }
+                } else {
+                    Log.d(TAG, "No valid sub");
+                }
             }
         }
     }
 
+    private boolean checkSubId(int phoneId) {
+        int subId = QtiCallUtils.getSubId(phoneId);
+        return (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+    }
+
     @Override
     public void onIncomingCall(InCallState oldState, InCallState newState, Call call) {
+        int subId = call.getSubId();
+        int phoneId = QtiCallUtils.getPhoneId(subId);
         Log.d(this, "onIncomingCall: " + this);
-        Call modifyCall = CallList.getInstance().getVideoUpgradeRequestCall();
+        Call modifyCall = mCalls.getVideoUpgradeRequestCall();
         if (modifyCall != null) {
             showAnswerUi(false);
             Log.d(this, "declining upgrade request id: ");
-            CallList.getInstance().removeCallUpdateListener(mCallId, this);
+            mCalls.removeCallUpdateListener(mCallId[phoneId], this);
             InCallPresenter.getInstance().declineUpgradeRequest();
         }
-        if (!call.getId().equals(mCallId)) {
+        if (!call.getId().equals(mCallId[phoneId])) {
             // A new call is coming in.
             processIncomingCall(call);
         }
@@ -97,15 +156,24 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
     @Override
     public void onDisconnect(Call call) {
         // no-op
+        int subId = call.getSubId();
+        int phoneId = QtiCallUtils.getPhoneId(subId);
+        if (call.equals(mCall[phoneId])) {
+            mCall[phoneId] = null;
+        }
     }
 
-    public void onSessionModificationStateChange(int sessionModificationState) {
+    public void onSessionModificationStateChange(Call call, int sessionModificationState) {
         boolean isUpgradePending = sessionModificationState ==
                 Call.SessionModificationState.RECEIVED_UPGRADE_TO_VIDEO_REQUEST;
 
         if (!isUpgradePending) {
             // Stop listening for updates.
-            CallList.getInstance().removeCallUpdateListener(mCallId, this);
+            for (int i = 0; i < InCallServiceImpl.sPhoneCount; i++) {
+                if (mCallId[i] != null) {
+                    mCalls.removeCallUpdateListener(mCallId[i], this);
+                }
+            }
             showAnswerUi(false);
         }
     }
@@ -143,15 +211,19 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
     }
 
     private void processIncomingCall(Call call) {
-        mCallId = call.getId();
-        mCall = call;
+        int subId = call.getSubId();
+        int phoneId = QtiCallUtils.getPhoneId(subId);
+        mCallId[phoneId] = call.getId();
+        mCall[phoneId] = call;
 
+        mCalls.addListener(this);
         // Listen for call updates for the current call.
-        CallList.getInstance().addCallUpdateListener(mCallId, this);
+        mCalls.addCallUpdateListener(mCallId[phoneId], this);
 
-        Log.d(TAG, "Showing incoming for call id: " + mCallId + " " + this);
+        Log.d(TAG, "Showing incoming for call id: " + mCallId[phoneId] + " " + this);
         if (showAnswerUi(true)) {
-            final List<String> textMsgs = CallList.getInstance().getTextResponses(call.getId());
+            mVideoState = call.getVideoState();
+            final List<String> textMsgs = mCalls.getTextResponses(call.getId());
             configureAnswerTargetsForSms(call, textMsgs);
         }
     }
@@ -171,11 +243,13 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
 
     private void processVideoUpgradeRequestCall(Call call) {
         Log.d(this, " processVideoUpgradeRequestCall call=" + call);
-        mCallId = call.getId();
-        mCall = call;
+        int subId = call.getSubId();
+        int phoneId = QtiCallUtils.getPhoneId(subId);
+        mCallId[phoneId] = call.getId();
+        mCall[phoneId] = call;
 
         // Listen for call updates for the current call.
-        CallList.getInstance().addCallUpdateListener(mCallId, this);
+        CallList.getInstance().addCallUpdateListener(mCallId[phoneId], this);
 
         final int currentVideoState = call.getVideoState();
         final int modifyToVideoState = call.getRequestedVideoState();
@@ -192,8 +266,9 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
             return;
         }
         showAnswerUi(true);
-        ui.showTargets(AnswerFragment.TARGET_SET_FOR_VIDEO_ACCEPT_REJECT_REQUEST,
-                modifyToVideoState);
+        ui.showTargets(QtiCallUtils.getSessionModificationOptions(getUi().getContext(),
+                currentVideoState, modifyToVideoState));
+
     }
 
     private boolean isEnabled(int videoState, int mask) {
@@ -205,12 +280,14 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
         Log.d(this, "onCallStateChange() " + call + " " + this);
         if (call.getState() != Call.State.INCOMING) {
             boolean isUpgradePending = isVideoUpgradePending(call);
+            int subId = call.getSubId();
+            int phoneId = QtiCallUtils.getPhoneId(subId);
             if (!isUpgradePending) {
                 // Stop listening for updates.
-                CallList.getInstance().removeCallUpdateListener(mCallId, this);
+                mCalls.removeCallUpdateListener(mCallId[phoneId], this);
             }
 
-            final Call incall = CallList.getInstance().getIncomingCall();
+            final Call incall = mCalls.getIncomingCall();
             if (incall != null || isUpgradePending) {
                 showAnswerUi(true);
             } else {
@@ -218,26 +295,43 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
             }
 
             mHasTextMessages = false;
-        } else if (!mHasTextMessages) {
-            final List<String> textMsgs = CallList.getInstance().getTextResponses(call.getId());
-            if (textMsgs != null) {
-                configureAnswerTargetsForSms(call, textMsgs);
-            }
+        } else if (!mHasTextMessages || (mVideoState != call.getVideoState())) {
+            final List<String> textMsgs = mCalls.getTextResponses(call.getId());
+            mVideoState = call.getVideoState();
+            configureAnswerTargetsForSms(call, textMsgs);
         }
     }
 
+    // get active phoneId, for which call is visible to user
+    private int getActivePhoneId() {
+        int phoneId = INVALID_PHONEID;
+        if (mCalls.isDsdaEnabled()) {
+            int subId = mCalls.getActiveSubId();
+            phoneId = QtiCallUtils.getPhoneId(subId);
+        } else {
+            for (int i = 0; i < mCall.length; i++) {
+                if (mCall[i] != null) {
+                    phoneId = i;
+                }
+            }
+        }
+        return phoneId;
+    }
+
     public void onAnswer(int videoState, Context context) {
-        if (mCallId == null) {
+        int phoneId = getActivePhoneId();
+        Log.i(this, "onAnswer  mCallId:" + mCallId + "phoneId:" + phoneId);
+        if (mCallId == null || phoneId == INVALID_PHONEID) {
             return;
         }
 
-        if (mCall.getSessionModificationState()
+        if (mCall[phoneId].getSessionModificationState()
                 == Call.SessionModificationState.RECEIVED_UPGRADE_TO_VIDEO_REQUEST) {
             Log.d(this, "onAnswer (upgradeCall) mCallId=" + mCallId + " videoState=" + videoState);
             InCallPresenter.getInstance().acceptUpgradeRequest(videoState, context);
         } else {
             Log.d(this, "onAnswer (answerCall) mCallId=" + mCallId + " videoState=" + videoState);
-            TelecomAdapter.getInstance().answerCall(mCall.getId(), videoState);
+            InCallPresenter.getInstance().answerIncomingCall(context, videoState);
         }
     }
 
@@ -246,12 +340,13 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
      * reject since it seems to be more prevalent.
      */
     public void onDecline(Context context) {
-        Log.d(this, "onDecline " + mCallId);
-        if (mCall.getSessionModificationState()
+        int phoneId = getActivePhoneId();
+        Log.d(this, "onDecline mCallId:" + mCallId + "phoneId:" + phoneId);
+        if (mCall[phoneId].getSessionModificationState()
                 == Call.SessionModificationState.RECEIVED_UPGRADE_TO_VIDEO_REQUEST) {
             InCallPresenter.getInstance().declineUpgradeRequest(context);
         } else {
-            TelecomAdapter.getInstance().rejectCall(mCall.getId(), false, null);
+            TelecomAdapter.getInstance().rejectCall(mCall[phoneId].getId(), false, null);
         }
     }
 
@@ -262,9 +357,42 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
         }
     }
 
+    /**
+     * Deflect the incoming call.
+     */
+    public void onDeflect(Context context) {
+        if (mCallId == null) {
+            return;
+        }
+        Log.d(this, "onDeflect " + mCallId);
+
+        String deflectCallNumber = QtiImsExtUtils.getCallDeflectNumber(
+                                           context.getContentResolver());
+        /* If not set properly, inform user via toast */
+        if (deflectCallNumber == null) {
+            Log.w(this, "getCallDeflectNumber is null or Empty.");
+            QtiCallUtils.displayToast(context, R.string.qti_description_deflect_error);
+        } else {
+            int phoneId = 0;
+            try {
+                Log.d(this, "Sending deflect request with Phone id " + phoneId +
+                        " to " + deflectCallNumber);
+                QtiImsExtManager.getInstance().sendCallDeflectRequest(phoneId,
+                        deflectCallNumber, imsInterfaceListener);
+             } catch (QtiImsException e) {
+                 Log.e(this, "sendCallDeflectRequest exception " + e);
+                 QtiCallUtils.displayToast(getUi().getContext(),
+                         R.string.qti_description_deflect_service_error);
+             }
+        }
+    }
+
     public void rejectCallWithMessage(String message) {
-        Log.d(this, "sendTextToDefaultActivity()...");
-        TelecomAdapter.getInstance().rejectCall(mCall.getId(), true, message);
+        int phoneId = getActivePhoneId();
+        Log.i(this, "sendTextToDefaultActivity()...phoneId:" + phoneId);
+        if (phoneId != INVALID_PHONEID) {
+            TelecomAdapter.getInstance().rejectCall(mCall[phoneId].getId(), true, message);
+        }
 
         onDismissDialog();
     }
@@ -284,12 +412,25 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
 
         // Only present the user with the option to answer as a video call if the incoming call is
         // a bi-directional video call.
-        if (VideoUtils.isBidirectionalVideoCall(call)) {
+        if (VideoUtils.isVideoCall(call)) {
             if (withSms) {
-                getUi().showTargets(AnswerFragment.TARGET_SET_FOR_VIDEO_WITH_SMS);
+                getUi().showTargets(QtiCallUtils.getIncomingCallAnswerOptions(
+                        getUi().getContext(), call.getVideoState(), withSms));
                 getUi().configureMessageDialog(textMsgs);
             } else {
-                getUi().showTargets(AnswerFragment.TARGET_SET_FOR_VIDEO_WITHOUT_SMS);
+                getUi().showTargets(QtiCallUtils.getIncomingCallAnswerOptions(
+                        getUi().getContext(), call.getVideoState(), withSms));
+            }
+        } else if (isCallDeflectSupported()) {
+            /**
+             * Only present the user with the option to deflect call,
+             * if the incoming call is only an audio call.
+             */
+            if (withSms) {
+                getUi().showTargets(AnswerFragment.TARGET_SET_FOR_QTI_AUDIO_WITH_SMS);
+                getUi().configureMessageDialog(textMsgs);
+            } else {
+                getUi().showTargets(AnswerFragment.TARGET_SET_FOR_QTI_AUDIO_WITHOUT_SMS);
             }
         } else {
             if (withSms) {
@@ -301,6 +442,23 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
         }
     }
 
+    /**
+     * Checks the Settings to conclude on the call deflect support.
+     * Returns true if call deflect is possible, false otherwise.
+     */
+    private boolean isCallDeflectSupported() {
+        int value = 0;
+        try{
+            value = android.provider.Settings.Global.getInt(
+                    getUi().getContext().getContentResolver(),
+                    QtiImsExtUtils.QTI_IMS_DEFLECT_ENABLED);
+        } catch(Settings.SettingNotFoundException e) {
+            //do Nothing
+            Log.e(this, "isCallDeflectSupported exception " + e);
+        }
+        return (value == 1);
+    }
+
     interface AnswerUi extends Ui {
         public void onShowAnswerUi(boolean shown);
         public void showTargets(int targetSet);
@@ -308,5 +466,24 @@ public class AnswerPresenter extends Presenter<AnswerPresenter.AnswerUi>
         public void showMessageDialog();
         public void configureMessageDialog(List<String> textResponses);
         public Context getContext();
+    }
+
+    @Override
+    public void onActiveSubChanged(int subId) {
+        final Call call = mCalls.getIncomingCall();
+        int phoneId = QtiCallUtils.getPhoneId(subId);
+        if ((call != null) && (call.getId() == mCallId[phoneId])) {
+            Log.d(this, "Show incoming for call id: " + mCallId[phoneId] + " " + this);
+            if (showAnswerUi(true)) {
+                final List<String> textMsgs = mCalls.getTextResponses(
+                        call.getId());
+                configureAnswerTargetsForSms(call, textMsgs);
+            }
+        } else if ((call == null) && (mCalls.hasAnyLiveCall(subId))) {
+            Log.d(this, "Hide incoming for call id: " + mCallId[phoneId] + " " + this);
+            showAnswerUi(false);
+        } else {
+            Log.d(this, "No incoming call present for sub = " + subId + " " + this);
+        }
     }
 }

@@ -60,12 +60,6 @@
              android:elevation="4dp"
              android:layout_alignParentBottom="true" />
 
-    <include layout="@layout/manage_conference_call_button"
-             android:layout_width="match_parent"
-             android:layout_height="wrap_content"
-             android:elevation="5dp"
-             android:layout_alignParentBottom="true"/>
-
     <FrameLayout
         android:id="@+id/floating_end_call_action_button_container"
         android:layout_width="@dimen/end_call_floating_action_button_diameter"
@@ -97,12 +91,69 @@
         <ProgressBar
             android:id="@+id/progress_bar"
             style="@android:style/Widget.Material.ProgressBar"
-            android:layout_gravity="center"
+            android:layout_gravity="left|center_vertical"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:indeterminate="true" />
 
     </FrameLayout>
+
+    <fragment android:name="com.android.incallui.RcsCallFragment"
+        android:id="@+id/enrichcall_container"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/primary_call_info_container" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_centerHorizontal="true"
+        android:layout_below="@id/enrichcall_container">
+
+        <include layout="@layout/manage_conference_call_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:elevation="5dp"
+            android:layout_alignParentBottom="true"/>
+
+        <!-- Volume boost and Volume enhancements in-call UI -->
+        <ImageButton android:id="@+id/volumeBoost"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:visibility="gone"
+            android:soundEffectsEnabled="false"
+            android:background="@drawable/vb_normal"/>
+
+    </LinearLayout>
+
+    <!-- Call recorder infor -->
+    <RelativeLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentLeft="true">
+        <TextView android:id="@+id/recordingIcon"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_alignParentLeft="true"
+                  android:layout_marginLeft="24dp"
+                  android:drawableRight="@drawable/ic_recording_indicator"
+                  android:paddingBottom="119dp"
+                  android:visibility="invisible"/>
+        <TextView android:id="@+id/recordingTime"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_marginLeft="5dp"
+                  android:layout_toRightOf="@id/recordingIcon"
+                  android:paddingBottom="120dp"
+                  android:singleLine="true"
+                  android:text="@string/recording_time_text"
+                  android:textAppearance="?android:attr/textAppearanceSmall"
+                  android:textColor="@color/incall_call_banner_text_color"
+                  android:visibility="invisible"/>
+    </RelativeLayout>
 
     <fragment android:name="com.android.incallui.VideoCallFragment"
               android:layout_alignParentStart="true"

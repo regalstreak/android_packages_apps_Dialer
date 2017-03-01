@@ -59,11 +59,14 @@
 
     </LinearLayout>
 
+    <include layout="@layout/call_log_list_item_action_enriched_call" />
+
     <LinearLayout
         android:id="@+id/video_call_action"
         style="@style/CallLogActionStyle">
 
         <ImageView
+            android:id="@+id/videoCallIcon"
             style="@style/CallLogActionIconStyle"
             android:src="@drawable/ic_videocam_24dp" />
 

@@ -151,6 +151,44 @@
             android:background="@drawable/btn_merge"
             android:contentDescription="@string/onscreenMergeCallsText"
             android:visibility="gone" />
+        <!-- "Add Participant" -->
+        <ImageButton android:id="@+id/addParticipant"
+            style="@style/InCallButton"
+            android:background="@drawable/btn_addparticipant"
+            android:contentDescription="@string/onscreenAddParticipant"
+            android:visibility="gone" />
+
+        <!-- "Hide Me" -->
+        <ImageButton android:id="@+id/hideMe"
+            style="@style/InCallButton"
+            android:background="@drawable/btn_compound_video_off"
+            android:contentDescription="@string/qti_ims_hideMeText_unselected"
+            android:visibility="gone" />
+
+        <!-- "Blind transfer" -->
+        <ImageButton android:id="@+id/blindTransfer"
+            style="@style/InCallButton"
+            android:background="@drawable/btn_add"
+            android:contentDescription="@string/qti_ims_onscreenBlindTransfer"
+            android:visibility="gone" />
+        <!-- "Assured transfer" -->
+        <ImageButton android:id="@+id/assuredTransfer"
+            style="@style/InCallButton"
+            android:background="@drawable/btn_add"
+            android:contentDescription="@string/qti_ims_onscreenAssuredTransfer"
+            android:visibility="gone" />
+        <!-- "Consultative transfer" -->
+        <ImageButton android:id="@+id/consultativeTransfer"
+            style="@style/InCallButton"
+            android:background="@drawable/btn_add"
+            android:contentDescription="@string/qti_ims_onscreenConsultativeTransfer"
+            android:visibility="gone" />
+        <!-- "Record Call" -->
+        <ImageButton android:id="@+id/recordButton"
+            style="@style/InCallButton"
+            android:background="@drawable/btn_start_record"
+            android:contentDescription="@string/menu_start_record"
+            android:visibility="gone"/>
 
         <!-- "Overflow" -->
         <ImageButton android:id="@+id/overflowButton"
@@ -164,6 +202,24 @@
             style="@style/InCallButton"
             android:background="@drawable/ic_group_white_24dp"
             android:contentDescription="@string/onscreenManageConferenceText"
+            android:visibility="gone" />
+
+        <ImageButton android:id="@+id/rxtxVideoCallButton"
+            style="@style/InCallButton"
+            android:background="@drawable/btn_change_to_video"
+            android:contentDescription="@string/overflowBothCallMenuItemText"
+            android:visibility="gone" />
+
+        <ImageButton android:id="@+id/rxVedioCallButton"
+            style="@style/InCallButton"
+            android:background="@drawable/btn_change_to_hm_video"
+            android:contentDescription="@string/overflowRXCallMenuItemText"
+            android:visibility="gone" />
+
+        <ImageButton android:id="@+id/volteCallButton"
+            style="@style/InCallButton"
+            android:background="@drawable/btn_compound_audio"
+            android:contentDescription="@string/overflowVOCallMenuItemText"
             android:visibility="gone" />
 
     </LinearLayout>

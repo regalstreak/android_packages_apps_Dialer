@@ -39,13 +39,17 @@
     <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS"/>
     <uses-permission android:name="android.permission.NFC" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.MODIFY_PHONE_STATE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.USE_CREDENTIALS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="com.qualcomm.permission.USE_PHONE_SERVICE" />
+    <uses-permission android:name="android.permission.CAPTURE_AUDIO_OUTPUT" />
     <uses-permission android:name="android.permission.READ_SYNC_SETTINGS" />
     <uses-permission android:name="android.permission.CONTROL_INCALL_EXPERIENCE" />
     <uses-permission android:name="com.android.voicemail.permission.ADD_VOICEMAIL" />
@@ -56,10 +60,16 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.BROADCAST_STICKY" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CONNECTIVITY_INTERNAL" />
+    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS" />
+    <uses-permission android:name="android.permission.CALL_PRIVILEGED" />
     <!-- This tells the activity manager to not delay any of our activity
      start requests, even if they happen immediately after the user
      presses home. -->
     <uses-permission android:name="android.permission.STOP_APP_SWITCHES" />
+    <!-- For enrich call -->
+    <uses-permission android:name="com.qualcomm.qti.internal.permission.ACCESS_ENRICHED_CALL" />
 
     <application
         android:name="DialerApplication"
@@ -70,9 +80,12 @@
         android:backupAgent='com.android.dialer.DialerBackupAgent'
         android:usesCleartextTraffic="false">
 
+        <uses-library android:name="org.codeaurora.rcscommon" android:required="false" />
+
         <meta-data android:name="com.google.android.backup.api_key"
             android:value="AEdPqrEAAAAIBXgtCEKQ6W0PXVnW-ZVia2KmlV2AxsTw3GjAeQ" />
 
+        <uses-library android:name="com.qualcomm.qti.smartsearch" android:required="false" />
         <!-- The entrance point for Phone UI.
              stateAlwaysHidden is set to suppress keyboard show up on
              dialpad screen. -->
@@ -163,6 +176,7 @@
         </activity>
 
         <activity android:name="com.android.dialer.calllog.CallLogActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
             android:label="@string/call_log_activity_title"
             android:theme="@style/DialtactsThemeWithoutActionBarOverlay"
             android:icon="@mipmap/ic_launcher_phone">
@@ -229,6 +243,12 @@
             android:label="@string/launcherActivityLabel"
             android:theme="@style/BackgroundOnlyTheme"
             android:exported="false"/>
+
+        <activity android:name=".VideoCallWelcomeActivity"
+                  android:theme="@*android:style/Theme.DeviceDefault.Light.Dialog.Alert"
+                  android:finishOnCloseSystemDialogs="true"
+                  android:excludeFromRecents="true"
+                  android:exported="false" />
 
         <!-- vCard related -->
         <activity android:name="com.android.contacts.common.vcard.ImportVCardActivity"
@@ -309,10 +329,10 @@
              fullScreenIntent of a notification (for incoming calls.) -->
         <activity android:name="com.android.incallui.InCallActivity"
                   android:theme="@style/Theme.InCallScreen"
-                  android:label="@string/phoneAppLabel"
+                  android:label=""
                   android:excludeFromRecents="true"
                   android:launchMode="singleInstance"
-                  android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
+                  android:configChanges="smallestScreenSize|screenLayout|keyboardHidden"
                   android:exported="false"
                   android:screenOrientation="nosensor"
                   android:directBootAware="true"
@@ -360,5 +380,13 @@
             android:exported="false"
             android:multiprocess="false"
             />
+
+        <activity android:name=".SpeedDialListActivity"
+            android:theme="@style/SpeedDialtactsTheme"
+            android:label="@string/speed_dial_settings" >
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

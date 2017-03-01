@@ -35,6 +35,8 @@ import android.telecom.StatusHints;
 import android.telecom.TelecomManager;
 import android.telecom.VideoProfile;
 import android.telephony.PhoneNumberUtils;
+import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.accessibility.AccessibilityManager;
@@ -74,6 +76,11 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
 
     private static final String TAG = CallCardPresenter.class.getSimpleName();
     private static final long CALL_TIME_UPDATE_INTERVAL_MS = 1000;
+
+    private static final int IDP_NONE = 0;
+    private static final int IDP_CDMA = 1;
+    private static final int IDP_GSM = 2;
+    private static final int IDP_BOTH = 3;
 
     private final EmergencyCallListener mEmergencyCallListener =
             ObjectFactory.newEmergencyCallListener();
@@ -135,6 +142,18 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
         });
     }
 
+    private boolean isGeocoderLocationNeeded(Call call) {
+        Log.d(this, "isGeocoderLocationNeeded getState() = " + call.getState());
+        if (call.getState() == Call.State.INCOMING ||
+                call.getState() == Call.State.CALL_WAITING ||
+                call.getState() == Call.State.DIALING ||
+                call.getState() == Call.State.CONNECTING ||
+                call.getState() == Call.State.SELECT_PHONE_ACCOUNT) {
+            return true;
+        };
+        return false;
+    }
+
     public void init(Context context, Call call) {
         mContext = Preconditions.checkNotNull(context);
         mDistanceHelper = ObjectFactory.newDistanceHelper(mContext, this);
@@ -153,7 +172,7 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
 
             // start processing lookups right away.
             if (!call.isConferenceCall()) {
-                startContactInfoSearch(call, true, call.getState() == Call.State.INCOMING);
+                startContactInfoSearch(call, true, isGeocoderLocationNeeded(call));
             } else {
                 updateContactEntry(null, true);
             }
@@ -273,7 +292,7 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
             CallList.getInstance().addCallUpdateListener(mPrimary.getId(), this);
 
             mPrimaryContactInfo = ContactInfoCache.buildCacheEntryFromCall(mContext, mPrimary,
-                    mPrimary.getState() == Call.State.INCOMING);
+                    isGeocoderLocationNeeded(mPrimary));
             updatePrimaryDisplayInfo();
             maybeStartSearch(mPrimary, true);
             maybeClearSessionModificationState(mPrimary);
@@ -302,6 +321,7 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
         // Start/stop timers.
         if (isPrimaryCallActive()) {
             Log.d(this, "Starting the calltime timer");
+            mPrimary.triggerCalcBaseChronometerTime();
             mCallTimer.start(CALL_TIME_UPDATE_INTERVAL_MS);
         } else {
             Log.d(this, "Canceling the calltime timer");
@@ -360,7 +380,7 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
      * @param sessionModificationState The new session modification state.
      */
     @Override
-    public void onSessionModificationStateChange(int sessionModificationState) {
+    public void onSessionModificationStateChange(Call call, int sessionModificationState) {
         Log.d(this, "onSessionModificationStateChange : sessionModificationState = " +
                 sessionModificationState);
 
@@ -425,11 +445,13 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
         return null;
     }
 
-    private void updatePrimaryCallState() {
+    public void updatePrimaryCallState() {
         if (getUi() != null && mPrimary != null) {
             boolean isWorkCall = mPrimary.hasProperty(PROPERTY_ENTERPRISE_CALL)
                     || (mPrimaryContactInfo == null ? false
                             : mPrimaryContactInfo.userType == ContactsUtils.USER_TYPE_WORK);
+            InCallPresenter.getInstance().setThemeColors();
+            boolean isConfCall = mPrimary.isConferenceCall() || mPrimary.isIncomingConfCall();
             getUi().setCallState(
                     mPrimary.getState(),
                     mPrimary.getVideoState(),
@@ -439,7 +461,7 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
                     getCallStateIcon(),
                     getGatewayNumber(),
                     mPrimary.hasProperty(Details.PROPERTY_WIFI),
-                    mPrimary.isConferenceCall(),
+                    isConfCall,
                     isWorkCall);
 
             maybeShowHdAudioIcon();
@@ -540,9 +562,7 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
             ui.setPrimaryCallElapsedTime(false, 0);
             mCallTimer.cancel();
         } else {
-            final long callStart = mPrimary.getConnectTimeMillis();
-            final long duration = System.currentTimeMillis() - callStart;
-            ui.setPrimaryCallElapsedTime(true, duration);
+            ui.setPrimaryCallElapsedTime(true, mPrimary.getCallDuration());
         }
     }
 
@@ -567,7 +587,7 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
     private void maybeStartSearch(Call call, boolean isPrimary) {
         // no need to start search for conference calls which show generic info.
         if (call != null && !call.isConferenceCall()) {
-            startContactInfoSearch(call, isPrimary, call.getState() == Call.State.INCOMING);
+            startContactInfoSearch(call, isPrimary, isGeocoderLocationNeeded(call));
         }
     }
 
@@ -738,6 +758,82 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
         return retval;
     }
 
+    private boolean checkIdpEnable(int subId) {
+        boolean ret = false;
+        final int checkIdp = mContext.getResources().getInteger(R.integer.check_idp);
+        final int phoneType = TelephonyManager.getDefault().getCurrentPhoneType(subId);
+
+        if (checkIdp == IDP_BOTH ||
+                (checkIdp == IDP_CDMA && phoneType == TelephonyManager.PHONE_TYPE_CDMA) ||
+                (checkIdp == IDP_GSM && phoneType == TelephonyManager.PHONE_TYPE_GSM)) {
+            ret = true;
+        }
+
+        Log.i(this, "checkIdp phone type:" + phoneType + " enabled:" + ret);
+        return ret;
+    }
+
+    private int getSubId() {
+        int subId = SubscriptionManager.getDefaultVoiceSubscriptionId();
+
+        PhoneAccountHandle accountHandle = mPrimary.getAccountHandle();
+        if (accountHandle != null) {
+            TelecomManager mgr = InCallPresenter.getInstance().getTelecomManager();
+            PhoneAccount account = mgr.getPhoneAccount(accountHandle);
+            if (account != null) {
+                subId = TelephonyManager.getDefault().getSubIdForPhoneAccount(account);
+                Log.d(this, "get sub id from phone account = " + subId);
+            }
+        }
+
+        return subId;
+    }
+
+    private String checkIdp(String number, boolean nameIsNumber, boolean isIncoming) {
+        int subId = getSubId();
+        String checkedNumber = number;
+        String[] idp = mContext.getResources().getStringArray(R.array.international_idp);
+        String[] idpValues = mContext.getResources().
+                getStringArray(R.array.international_idp_values);
+        boolean isDataInValid = (idp.length == 0 || idpValues.length == 0 ||
+                idp.length != idpValues.length);
+
+        if (checkIdpEnable(subId) && nameIsNumber && !isDataInValid) {
+            if (!isIncoming) {
+                final int checkRoamingIdx = mContext.getResources().
+                        getInteger(R.integer.check_idp_roaming_idx);
+                final boolean isNetworkRoaming =
+                        TelephonyManager.getDefault().isNetworkRoaming(subId);
+                for (int i = 0; i < idp.length; i++) {
+                    Log.i(this, "checkIdp idp:" + idp[i] + " idp value:" + idpValues[i] +
+                            " roaming idx:" + checkRoamingIdx);
+                    int indexIdp = checkedNumber.indexOf(idp[i]);
+
+                    if (indexIdp != -1) {
+                        if ((checkRoamingIdx == i && !isNetworkRoaming) ||
+                                checkRoamingIdx != i) {
+                            checkedNumber = checkedNumber.substring(0, indexIdp) + idpValues[i] +
+                                    checkedNumber.substring(indexIdp + idp[i].length());
+                        }
+                    }
+                }
+            } else {
+                final int checkReconvertIdx = mContext.getResources().
+                        getInteger(R.integer.check_idp_reconvert_idx);
+                if (checkReconvertIdx >= 0 && checkReconvertIdx < idp.length &&
+                        number.indexOf(idpValues[checkReconvertIdx]) == 0) {
+                    checkedNumber = idp[checkReconvertIdx] +
+                            number.substring(idpValues[checkReconvertIdx].length());
+                }
+            }
+        }
+
+        Log.i(this, "checkIdp number: " + number + " subid:" + subId + " isIncoming:" +
+                isIncoming + " checked number:" + checkedNumber + " inValid:" +
+                isDataInValid + " nameIsNumber" + nameIsNumber);
+        return checkedNumber;
+    }
+
     private void updatePrimaryDisplayInfo() {
         final CallCardUi ui = getUi();
         if (ui == null) {
@@ -806,6 +902,12 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
             boolean nameIsNumber = name != null && name.equals(mPrimaryContactInfo.number);
             // Call with caller that is a work contact.
             boolean isWorkContact = (mPrimaryContactInfo.userType == ContactsUtils.USER_TYPE_WORK);
+            boolean isIncoming = mPrimary.getState() == Call.State.INCOMING;
+            boolean isWithPrefix = mContext.getResources().
+                getBoolean(R.bool.phone_number_with_intl_prefix);
+            if(isWithPrefix == true){
+                name = checkIdp(name, nameIsNumber, isIncoming);
+            }
             ui.setPrimary(
                     number,
                     name,
@@ -841,6 +943,10 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
             return;
         }
 
+        final boolean notUpdateSecondary = mSecondary.getState() == Call.State.ACTIVE
+                && !mSecondary.can(android.telecom.Call.Details.CAPABILITY_SUPPORT_HOLD)
+                && !mSecondary.can(android.telecom.Call.Details.CAPABILITY_HOLD);
+        Log.d(TAG, "notUpdateSecondary:" + notUpdateSecondary);
         if (mSecondary.isConferenceCall()) {
             ui.setSecondary(
                     true /* show */,
@@ -851,7 +957,7 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
                     true /* isConference */,
                     mSecondary.isVideoCall(mContext),
                     mIsFullscreen);
-        } else if (mSecondaryContactInfo != null) {
+        } else if (mSecondaryContactInfo != null && !notUpdateSecondary) {
             Log.d(TAG, "updateSecondaryDisplayInfo() " + mSecondaryContactInfo);
             String name = getNameForCall(mSecondaryContactInfo);
             boolean nameIsNumber = name != null && name.equals(mSecondaryContactInfo.number);
@@ -902,8 +1008,22 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
         PhoneAccount account = getAccountForCall(call);
         TelecomManager mgr = InCallPresenter.getInstance().getTelecomManager();
         if (account != null && !TextUtils.isEmpty(account.getLabel())
-                && TelecomManagerCompat.getCallCapablePhoneAccounts(mgr).size() > 1) {
+                && TelecomManagerCompat.getCallCapablePhoneAccounts(mgr).size() >= 1) {
             return account.getLabel().toString();
+        }
+        return null;
+    }
+
+    /**
+     * Return the icon to represent the call provider
+     */
+    private Drawable getCallProviderIcon(Call call) {
+        PhoneAccount account = getAccountForCall(call);
+        TelecomManager mgr = InCallPresenter.getInstance().getTelecomManager();
+        if (account != null && account.getIcon()!= null &&
+                mgr.getCallCapablePhoneAccounts().size() > 1 &&
+                SubscriptionManager.from(mContext).getActiveSubscriptionInfoCount() > 1) {
+            return account.getIcon().loadDrawable(mContext);
         }
         return null;
     }
@@ -943,7 +1063,7 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
             }
         }
 
-        return null;
+        return getCallProviderIcon(mPrimary);
     }
 
     private boolean hasOutgoingGatewayCall() {
@@ -1031,12 +1151,36 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
         }
         ui.setCallCardVisible(!isFullscreenMode);
         ui.setSecondaryInfoVisible(!isFullscreenMode);
+        final int callState = (mPrimary != null) ? mPrimary.getState() : Call.State.INVALID;
+        ui.setEndCallButtonEnabled(!isFullscreenMode &&
+                shouldShowEndCallButton(mPrimary, callState),
+                callState != Call.State.INCOMING /* animate */);
+        ui.showVbButton(!isFullscreenMode);
         maybeShowManageConferenceCallButton();
     }
 
     @Override
     public void onSecondaryCallerInfoVisibilityChanged(boolean isVisible, int height) {
         // No-op - the Call Card is the origin of this event.
+    }
+
+    @Override
+    public void onAnswerViewGrab(boolean isGrabbed) {
+        // No-op - required for RcsCallPresenter.
+    }
+
+    @Override
+    public void onIncomingVideoAvailabilityChanged(boolean isAvailable) {
+        Log.d(this, "onIncomingVideoAvailabilityChanged: available = " + isAvailable);
+        if (mPrimary == null) {
+            return;
+        }
+        updatePrimaryDisplayInfo();
+    }
+
+    @Override
+    public void onSendStaticImageStateChanged(boolean isEnabled) {
+        //No-op
     }
 
     private boolean isPrimaryCallActive() {
@@ -1169,5 +1313,6 @@ public class CallCardPresenter extends Presenter<CallCardPresenter.CallCardUi>
         void animateForNewOutgoingCall();
         void sendAccessibilityAnnouncement();
         void showNoteSentToast();
+        void showVbButton(boolean show);
     }
 }
