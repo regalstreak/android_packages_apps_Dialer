@@ -117,8 +117,7 @@ public class CallButtonFragment
         public static final int BUTTON_ADD_PARTICIPANT = 19;
         public static final int BUTTON_HIDE_ME = 20;
         public static final int BUTTON_RECORD_CALL = 21;
-        public static final int BUTTON_ADD_PARTICIPANT = 22;
-        public static final int BUTTON_COUNT = 23;
+        public static final int BUTTON_COUNT = 22;
     }
 
     private SparseIntArray mButtonVisibilityMap = new SparseIntArray(BUTTON_COUNT);
