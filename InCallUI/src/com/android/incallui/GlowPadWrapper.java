@@ -95,7 +95,6 @@ public class GlowPadWrapper extends GlowPadView implements GlowPadView.OnTrigger
     @Override
     public void onGrabbed(View v, int handle) {
         Log.d(this, "onGrabbed()");
-        InCallPresenter.getInstance().notifyAnswerViewGrabChanged(true);
         stopPing();
     }
 
@@ -107,7 +106,6 @@ public class GlowPadWrapper extends GlowPadView implements GlowPadView.OnTrigger
         } else {
             startPing();
         }
-        InCallPresenter.getInstance().notifyAnswerViewGrabChanged(false);
     }
 
     @Override

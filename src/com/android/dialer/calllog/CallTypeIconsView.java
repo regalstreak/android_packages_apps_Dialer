@@ -29,7 +29,6 @@ import android.view.View;
 import com.android.contacts.common.testing.NeededForTesting;
 import com.android.contacts.common.util.BitmapUtil;
 import com.android.dialer.R;
-import com.android.dialer.EnrichedCallHandler;
 import com.android.dialer.util.AppCompatConstants;
 import com.google.common.collect.Lists;
 
@@ -45,7 +44,6 @@ import org.codeaurora.ims.utils.QtiImsExtUtils;
 public class CallTypeIconsView extends View {
     private List<Integer> mCallTypes = Lists.newArrayListWithCapacity(3);
     private boolean mShowVideo = false;
-    private boolean mShowRcs = false;
     private int mWidth;
     private int mHeight;
 
@@ -138,21 +136,6 @@ public class CallTypeIconsView extends View {
     }
 
     /**
-     * Determines whether the RCS call icon will be shown.
-     *
-     * @param mShowRcs True where the RCS icon should be shown.
-     */
-    public void setShowRcs(boolean showRcs) {
-        mShowRcs = showRcs;
-
-        if (showRcs) {
-            mWidth += sResources.rcsCall.getIntrinsicWidth();
-            mHeight = Math.max(mHeight, sResources.rcsCall.getIntrinsicHeight());
-            invalidate();
-        }
-    }
-
-    /**
      * Determines if the video icon should be shown.
      *
      * @return True if the video icon should be shown.
@@ -223,15 +206,6 @@ public class CallTypeIconsView extends View {
             left = right + sResources.iconMargin;
         }
 
-        // If showing the RCS call icon, draw it scaled appropriately.
-        if (mShowRcs && sResources.rcsCall!=null) {
-            final Drawable drawable = sResources.rcsCall;
-            final int right = left + drawable.getIntrinsicWidth();
-            drawable.setBounds(left, 0, right, drawable.getIntrinsicHeight());
-            drawable.draw(canvas);
-            left = right + sResources.iconMargin;
-        }
-
         for (Integer callType : mCallTypes) {
             final Drawable drawableIms = getLteOrWifiDrawable(callType, mShowVideo);
             if (drawableIms != null) {
@@ -261,11 +235,6 @@ public class CallTypeIconsView extends View {
 
         //  Drawable repesenting a video call.
         public final Drawable videoCall;
-
-        /**
-         * Drawable repesenting a RCS call.
-         */
-        public final Drawable rcsCall;
 
         /**
          * The margin to use for icons.
@@ -325,14 +294,6 @@ public class CallTypeIconsView extends View {
                 videoCall = getScaledBitmap(context, R.drawable.ic_videocam_24dp);
             videoCall.setColorFilter(r.getColor(R.color.dialtacts_secondary_text_color),
                     PorterDuff.Mode.MULTIPLY);
-
-            if (EnrichedCallHandler.getInstance().isRcsFeatureEnabled()) {
-                rcsCall = r.getDrawable(R.drawable.ic_dialer_sip_white_24dp).mutate();
-                rcsCall.setColorFilter(r.getColor(R.color.dialtacts_secondary_text_color),
-                        PorterDuff.Mode.MULTIPLY);
-            } else {
-                rcsCall = null;
-            }
 
             iconMargin = r.getDimensionPixelSize(R.dimen.call_log_icon_margin);
 

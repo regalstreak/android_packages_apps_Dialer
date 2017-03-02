@@ -41,7 +41,6 @@ import android.widget.Toast;
 import com.android.contacts.common.CallUtil;
 import com.android.dialer.PhoneCallDetails;
 import com.android.dialer.R;
-import com.android.dialer.EnrichedCallHandler;
 import com.android.dialer.util.DialerUtils;
 import com.android.dialer.util.AppCompatConstants;
 import com.android.dialer.util.PresenceHelper;
@@ -145,31 +144,16 @@ public class CallDetailHistoryAdapter extends BaseAdapter implements View.OnClic
                     + ", callType = " + callType);
         callTypeIconView.clear();
         callTypeIconView.add(callType);
-
         /**
-         * RCS icon will be shown if its a RCS call, otherwise go for IMS icon
+         * Ims icon(VoLTE/VoWiFi/ViLTE/ViWiFi) will be shown if carrierOne is supported
+         * otherwise, default video icon will be shown if it is a video call.
          */
-        boolean isRcsCall = false;
-        if ((details.features & Calls.FEATURES_ENRICHED) == Calls.FEATURES_ENRICHED) {
-            isRcsCall = true;
-            callTypeIconView.setShowRcs(isRcsCall);
+        if (QtiImsExtUtils.isCarrierOneSupported()) {
+            callTypeIconView.addImsIcon(callType, isVideoCall);
         } else {
-            /**
-             * Ims icon(VoLTE/VoWiFi/ViLTE/ViWiFi) will be shown if carrierOne is supported
-             * otherwise, default video icon will be shown if it is a video call.
-             */
-            if (QtiImsExtUtils.isCarrierOneSupported()) {
-                callTypeIconView.addImsIcon(callType, isVideoCall);
-            } else {
-                callTypeIconView.setShowVideo(isVideoCall);
-            }
+            callTypeIconView.setShowVideo(isVideoCall);
         }
-
-        CharSequence callTypeText =
-                isRcsCall ? EnrichedCallHandler.getInstance().getCallTypeText(callType) :
-                mCallTypeHelper.getCallTypeText(callType, isVideoCall);
-
-        callTypeTextView.setText(callTypeText);
+        callTypeTextView.setText(mCallTypeHelper.getCallTypeText(callType, isVideoCall));
         // Set the date.
         CharSequence dateValue = DateUtils.formatDateRange(mContext, details.date, details.date,
                 DateUtils.FORMAT_SHOW_TIME | DateUtils.FORMAT_SHOW_DATE |

@@ -399,16 +399,8 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
             builder.setCategory(Notification.CATEGORY_CALL);
         }
 
-        // if enrich call and urgent the highlight text
-        // in red
-        if (InCallRcsUtils.isEnrichCall(call, mContext)) {
-            builder.setContentText(InCallRcsUtils.getEnrichContentText(
-                    mContext, call, content));
-        } else {
-            // Set the content
-            builder.setContentText(content);
-        }
-
+        // Set the content
+        builder.setContentText(content);
         builder.setSmallIcon(iconResId);
         builder.setContentTitle(contentTitle);
         builder.setLargeIcon(largeIcon);
@@ -622,11 +614,7 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
             if (supportsVoicePrivacy) {
                 resId =  R.drawable.stat_sys_vp_phone_call;
             } else {
-                if (InCallRcsUtils.isEnrichCall(call, mContext)) {
-                    resId = R.drawable.ic_enrich_call_white_24dp;
-                } else {
-                    resId =  R.drawable.ic_call_white_24dp;
-                }
+                resId =  R.drawable.ic_call_white_24dp;
             }
         }
         return resId;
@@ -652,12 +640,6 @@ public class StatusBarNotifier implements InCallPresenter.InCallStateListener,
         int resId = R.string.notification_ongoing_call;
         if (call.hasProperty(Details.PROPERTY_WIFI)) {
             resId = R.string.notification_ongoing_call_wifi;
-        }
-
-        if (InCallRcsUtils.isEnrichCall(call, mContext)) {
-            resId = InCallRcsUtils.getEnrichContentString(call,
-                    isIncomingOrWaiting);
-            return mContext.getString(resId);
         }
 
         if (isIncomingOrWaiting) {
